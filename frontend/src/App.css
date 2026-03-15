@@ -1,34 +1,188 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* App specific styles */
+
+/* Hero section */
+.hero-gradient {
+    background: linear-gradient(180deg, rgba(5,5,5,0) 0%, #050505 100%);
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
-}
-
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
+/* Table layout */
+.game-table-container {
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
-    align-items: center;
+}
+
+/* Card hand layout */
+.hand-container {
+    display: flex;
     justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+    gap: -20px;
+    padding: 1rem;
 }
 
-.App-link {
-    color: #61dafb;
+.hand-container .playing-card {
+    margin-left: -20px;
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
+.hand-container .playing-card:first-child {
+    margin-left: 0;
+}
+
+/* Score display */
+.score-display {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 2rem;
+    font-weight: bold;
+}
+
+/* Chat bubble */
+.chat-bubble {
+    max-width: 80%;
+    padding: 0.75rem 1rem;
+    border-radius: 16px;
+    word-wrap: break-word;
+}
+
+.chat-bubble.sent {
+    background: linear-gradient(135deg, #FFD700 0%, #FDB931 100%);
+    color: #000;
+    margin-left: auto;
+    border-bottom-right-radius: 4px;
+}
+
+.chat-bubble.received {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+    border-bottom-left-radius: 4px;
+}
+
+/* Lobby table card */
+.table-card {
+    background: rgba(26, 26, 26, 0.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-radius: 12px;
+    padding: 1.5rem;
+    transition: border-color 0.3s ease, transform 0.3s ease;
+}
+
+.table-card:hover {
+    border-color: rgba(255, 215, 0, 0.3);
+    transform: translateY(-4px);
+}
+
+/* Admin panel */
+.admin-sidebar {
+    width: 250px;
+    background: #0A0A0A;
+    border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.admin-nav-item {
+    padding: 0.75rem 1rem;
+    color: #A3A3A3;
+    transition: color 0.2s ease, background 0.2s ease;
+    border-radius: 8px;
+    margin: 0.25rem 0.5rem;
+}
+
+.admin-nav-item:hover {
+    color: #FFD700;
+    background: rgba(255, 215, 0, 0.1);
+}
+
+.admin-nav-item.active {
+    color: #FFD700;
+    background: rgba(255, 215, 0, 0.15);
+}
+
+/* Deposit status badges */
+.status-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.status-pending {
+    background: rgba(255, 215, 0, 0.2);
+    color: #FFD700;
+}
+
+.status-approved {
+    background: rgba(46, 204, 113, 0.2);
+    color: #2ECC71;
+}
+
+.status-rejected {
+    background: rgba(231, 76, 60, 0.2);
+    color: #E74C3C;
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .admin-sidebar {
+        position: fixed;
+        left: -250px;
+        top: 0;
+        bottom: 0;
+        z-index: 50;
+        transition: left 0.3s ease;
     }
-    to {
-        transform: rotate(360deg);
+    
+    .admin-sidebar.open {
+        left: 0;
     }
+    
+    .hand-container {
+        gap: -30px;
+    }
+    
+    .hand-container .playing-card {
+        margin-left: -30px;
+        width: 60px;
+    }
+    
+    .game-action-btn {
+        width: 60px;
+        height: 60px;
+        font-size: 0.75rem;
+    }
+}
+
+/* Loading spinner */
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid rgba(255, 215, 0, 0.1);
+    border-top-color: #FFD700;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Input styles */
+.input-dark {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #fff;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    transition: border-color 0.2s ease;
+}
+
+.input-dark:focus {
+    border-color: rgba(255, 215, 0, 0.5);
+    outline: none;
+}
+
+.input-dark::placeholder {
+    color: rgba(255, 255, 255, 0.3);
 }
