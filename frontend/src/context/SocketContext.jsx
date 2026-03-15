@@ -99,6 +99,24 @@ export const SocketProvider = ({ children }) => {
     return Promise.reject('Not connected');
   }, [socket, connected]);
 
+  const respondEnvido = useCallback((gameId, response) => {
+    if (socket && connected) {
+      return new Promise((resolve) => {
+        socket.emit('respond_envido', { game_id: gameId, response }, resolve);
+      });
+    }
+    return Promise.reject('Not connected');
+  }, [socket, connected]);
+
+  const callFlor = useCallback((gameId) => {
+    if (socket && connected) {
+      return new Promise((resolve) => {
+        socket.emit('call_flor', { game_id: gameId }, resolve);
+      });
+    }
+    return Promise.reject('Not connected');
+  }, [socket, connected]);
+
   const sendTableChat = useCallback((tableId, message, isTeamOnly = false) => {
     if (socket && connected) {
       socket.emit('table_chat', { table_id: tableId, message, is_team_only: isTeamOnly });
@@ -115,6 +133,8 @@ export const SocketProvider = ({ children }) => {
       callTruco,
       respondTruco,
       callEnvido,
+      respondEnvido,
+      callFlor,
       sendTableChat
     }}>
       {children}
