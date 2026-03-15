@@ -1,0 +1,5 @@
+[build]
+  NODE_VERSION = "20"
+
+[build.environment]
+  NODE_ENV = "production"
