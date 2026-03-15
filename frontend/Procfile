@@ -1,0 +1,2 @@
+# Frontend - Truco Argentino
+web: npx serve -s build -l ${PORT:-3000}
