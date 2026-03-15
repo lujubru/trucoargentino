@@ -119,6 +119,29 @@ class AdminSettings(BaseModel):
     private_table_cost: float
     platform_commission: float  # percentage (e.g., 30 for 30%)
 
+# Withdrawal Models
+class WithdrawalCreate(BaseModel):
+    amount: float
+    alias: str
+    titular_name: str
+
+class WithdrawalUpdate(BaseModel):
+    status: str  # approved, rejected
+
+# Tournament Models
+class TournamentCreate(BaseModel):
+    name: str
+    modality: str  # 1v1, 2v2, 3v3
+    num_tables: int  # Number of tables (e.g., 12)
+    entry_cost: float
+    with_flor: bool
+    points_to_win: int  # 15 or 30
+    first_place_percentage: float  # e.g., 50
+    second_place_percentage: float  # e.g., 20
+
+class TournamentJoinRequest(BaseModel):
+    tournament_id: str
+
 # ============== HELPER FUNCTIONS ==============
 
 def hash_password(password: str) -> str:
@@ -282,6 +305,39 @@ async def get_user_deposits(user: dict = Depends(get_current_user)):
     deposits = await db.deposits.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return deposits
 
+# ============== WITHDRAWAL ROUTES ==============
+
+@api_router.post("/cashbank/withdrawal")
+async def create_withdrawal(withdrawal: WithdrawalCreate, user: dict = Depends(get_current_user)):
+    if withdrawal.amount <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be positive")
+    
+    # Check user has enough balance
+    current_user = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if current_user["cashbank"] < withdrawal.amount:
+        raise HTTPException(status_code=400, detail=f"Saldo insuficiente. Tenés ${current_user['cashbank']}")
+    
+    withdrawal_id = str(uuid.uuid4())
+    withdrawal_doc = {
+        "id": withdrawal_id,
+        "user_id": user["id"],
+        "username": user["username"],
+        "amount": withdrawal.amount,
+        "alias": withdrawal.alias,
+        "titular_name": withdrawal.titular_name,
+        "user_balance_at_request": current_user["cashbank"],
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": None
+    }
+    await db.withdrawals.insert_one(withdrawal_doc)
+    return {"id": withdrawal_id, "status": "pending", "message": "Solicitud de retiro creada"}
+
+@api_router.get("/cashbank/withdrawals")
+async def get_user_withdrawals(user: dict = Depends(get_current_user)):
+    withdrawals = await db.withdrawals.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return withdrawals
+
 # ============== ADMIN ROUTES ==============
 
 @api_router.get("/admin/deposits")
@@ -322,6 +378,57 @@ async def update_deposit_status(deposit_id: str, update: DepositUpdate, admin: d
         })
     
     return {"message": f"Deposit {update.status}"}
+
+# ============== ADMIN WITHDRAWAL ROUTES ==============
+
+@api_router.get("/admin/withdrawals")
+async def get_all_withdrawals(status: Optional[str] = None, admin: dict = Depends(get_admin_user)):
+    query = {}
+    if status:
+        query["status"] = status
+    withdrawals = await db.withdrawals.find(query, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return withdrawals
+
+@api_router.put("/admin/withdrawals/{withdrawal_id}")
+async def update_withdrawal_status(withdrawal_id: str, update: WithdrawalUpdate, admin: dict = Depends(get_admin_user)):
+    withdrawal = await db.withdrawals.find_one({"id": withdrawal_id}, {"_id": 0})
+    if not withdrawal:
+        raise HTTPException(status_code=404, detail="Withdrawal not found")
+    
+    if withdrawal["status"] != "pending":
+        raise HTTPException(status_code=400, detail="Withdrawal already processed")
+    
+    # Check user still has enough balance
+    user = await db.users.find_one({"id": withdrawal["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    if update.status == "approved":
+        if user["cashbank"] < withdrawal["amount"]:
+            raise HTTPException(status_code=400, detail=f"Usuario no tiene saldo suficiente. Saldo actual: ${user['cashbank']}")
+        
+        # Deduct from user balance
+        await db.users.update_one(
+            {"id": withdrawal["user_id"]},
+            {"$inc": {"cashbank": -withdrawal["amount"]}}
+        )
+        
+        # Create transaction record
+        await db.transactions.insert_one({
+            "id": str(uuid.uuid4()),
+            "user_id": withdrawal["user_id"],
+            "type": "withdrawal",
+            "amount": -withdrawal["amount"],
+            "description": f"Retiro aprobado a {withdrawal['alias']} ({withdrawal['titular_name']})",
+            "created_at": datetime.now(timezone.utc).isoformat()
+        })
+    
+    await db.withdrawals.update_one(
+        {"id": withdrawal_id},
+        {"$set": {"status": update.status, "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    
+    return {"message": f"Retiro {update.status}"}
 
 @api_router.put("/admin/transfer-data")
 async def update_transfer_data(data: TransferDataUpdate, admin: dict = Depends(get_admin_user)):
@@ -515,8 +622,32 @@ async def join_table(table_id: str, user: dict = Depends(get_current_user)):
         await db.tables.update_one({"id": table_id}, {"$set": {"status": "playing"}})
         # Create game
         await create_game(table_id)
+        
+        # Auto-regenerate public table if it was public
+        if not table.get("is_private", False) and not table.get("tournament_id"):
+            await regenerate_public_table(table)
     
-    return {"message": "Joined table successfully"}
+    return {"message": "Joined table successfully", "table_id": table_id}
+
+async def regenerate_public_table(original_table: dict):
+    """Create a new table with the same config when one fills up"""
+    table_id = str(uuid.uuid4())
+    table_doc = {
+        "id": table_id,
+        "modality": original_table["modality"],
+        "entry_cost": original_table["entry_cost"],
+        "max_players": original_table["max_players"],
+        "with_flor": original_table["with_flor"],
+        "points_to_win": original_table["points_to_win"],
+        "is_private": False,
+        "code": None,
+        "players": [],
+        "status": "waiting",
+        "created_by": original_table.get("created_by"),
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.tables.insert_one(table_doc)
+    logger.info(f"Auto-regenerated public table: {table_id}")
 
 @api_router.post("/tables/join-by-code")
 async def join_by_code(request: JoinTableRequest, user: dict = Depends(get_current_user)):
@@ -529,6 +660,218 @@ async def join_by_code(request: JoinTableRequest, user: dict = Depends(get_curre
     
     # Use the regular join logic
     return await join_table(table["id"], user)
+
+# ============== TOURNAMENT ROUTES ==============
+
+@api_router.post("/tournaments")
+async def create_tournament(tournament: TournamentCreate, admin: dict = Depends(get_admin_user)):
+    """Admin creates a tournament"""
+    modality_players = {"1v1": 2, "2v2": 4, "3v3": 6}
+    players_per_table = modality_players.get(tournament.modality, 2)
+    total_players = tournament.num_tables * players_per_table
+    
+    tournament_id = str(uuid.uuid4())
+    tournament_doc = {
+        "id": tournament_id,
+        "name": tournament.name,
+        "modality": tournament.modality,
+        "num_tables": tournament.num_tables,
+        "entry_cost": tournament.entry_cost,
+        "with_flor": tournament.with_flor,
+        "points_to_win": tournament.points_to_win,
+        "first_place_percentage": tournament.first_place_percentage,
+        "second_place_percentage": tournament.second_place_percentage,
+        "platform_commission": 30.0,  # 30% commission
+        "players_per_table": players_per_table,
+        "total_players": total_players,
+        "registered_players": [],
+        "tables": [],
+        "status": "registration",  # registration, in_progress, finished
+        "current_round": 0,
+        "winners": [],
+        "created_by": admin["id"],
+        "created_at": datetime.now(timezone.utc).isoformat()
+    }
+    await db.tournaments.insert_one(tournament_doc)
+    return {"id": tournament_id, "message": f"Torneo creado - {total_players} jugadores necesarios"}
+
+@api_router.get("/tournaments")
+async def get_tournaments(user: dict = Depends(get_current_user)):
+    """Get available tournaments for registration"""
+    tournaments = await db.tournaments.find(
+        {"status": {"$in": ["registration", "in_progress"]}},
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(50)
+    return tournaments
+
+@api_router.get("/tournaments/{tournament_id}")
+async def get_tournament(tournament_id: str, user: dict = Depends(get_current_user)):
+    tournament = await db.tournaments.find_one({"id": tournament_id}, {"_id": 0})
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    return tournament
+
+@api_router.post("/tournaments/{tournament_id}/join")
+async def join_tournament(tournament_id: str, user: dict = Depends(get_current_user)):
+    """User joins a tournament"""
+    tournament = await db.tournaments.find_one({"id": tournament_id}, {"_id": 0})
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    if tournament["status"] != "registration":
+        raise HTTPException(status_code=400, detail="El torneo ya no acepta registros")
+    
+    # Check if already registered
+    if any(p["id"] == user["id"] for p in tournament["registered_players"]):
+        raise HTTPException(status_code=400, detail="Ya estás registrado en este torneo")
+    
+    if len(tournament["registered_players"]) >= tournament["total_players"]:
+        raise HTTPException(status_code=400, detail="Torneo completo")
+    
+    # Check balance
+    current_user = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if current_user["cashbank"] < tournament["entry_cost"]:
+        raise HTTPException(status_code=400, detail="Saldo insuficiente")
+    
+    # Deduct entry cost
+    await db.users.update_one({"id": user["id"]}, {"$inc": {"cashbank": -tournament["entry_cost"]}})
+    
+    # Create transaction
+    await db.transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "tournament_entry",
+        "amount": -tournament["entry_cost"],
+        "description": f"Inscripción torneo: {tournament['name']}",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Determine team based on modality
+    players_per_team = {"1v1": 1, "2v2": 2, "3v3": 3}
+    team_size = players_per_team.get(tournament["modality"], 1)
+    current_count = len(tournament["registered_players"])
+    team_number = (current_count // team_size) + 1
+    team_position = (current_count % team_size) + 1
+    
+    # Add player to tournament
+    player_entry = {
+        "id": user["id"],
+        "username": user["username"],
+        "team_number": team_number,
+        "team_position": team_position,
+        "status": "waiting_team" if team_size > 1 and team_position < team_size else "ready",
+        "registered_at": datetime.now(timezone.utc).isoformat()
+    }
+    
+    await db.tournaments.update_one(
+        {"id": tournament_id},
+        {"$push": {"registered_players": player_entry}}
+    )
+    
+    # Check if tournament is full and should start
+    updated_tournament = await db.tournaments.find_one({"id": tournament_id}, {"_id": 0})
+    if len(updated_tournament["registered_players"]) >= tournament["total_players"]:
+        await start_tournament(tournament_id)
+    
+    status = "esperando equipo" if player_entry["status"] == "waiting_team" else "esperando completar mesas"
+    return {"message": f"Registrado en torneo - {status}"}
+
+@api_router.post("/tournaments/{tournament_id}/cancel")
+async def cancel_tournament_registration(tournament_id: str, user: dict = Depends(get_current_user)):
+    """User cancels tournament registration (only before start)"""
+    tournament = await db.tournaments.find_one({"id": tournament_id}, {"_id": 0})
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+    
+    if tournament["status"] != "registration":
+        raise HTTPException(status_code=400, detail="No se puede cancelar después de iniciado el torneo")
+    
+    # Find player in tournament
+    player = next((p for p in tournament["registered_players"] if p["id"] == user["id"]), None)
+    if not player:
+        raise HTTPException(status_code=400, detail="No estás registrado en este torneo")
+    
+    # Refund entry cost
+    await db.users.update_one({"id": user["id"]}, {"$inc": {"cashbank": tournament["entry_cost"]}})
+    
+    # Create refund transaction
+    await db.transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "type": "tournament_refund",
+        "amount": tournament["entry_cost"],
+        "description": f"Reembolso torneo: {tournament['name']}",
+        "created_at": datetime.now(timezone.utc).isoformat()
+    })
+    
+    # Remove player from tournament
+    await db.tournaments.update_one(
+        {"id": tournament_id},
+        {"$pull": {"registered_players": {"id": user["id"]}}}
+    )
+    
+    return {"message": "Registro cancelado - Monto reembolsado"}
+
+async def start_tournament(tournament_id: str):
+    """Start tournament when all players are registered"""
+    tournament = await db.tournaments.find_one({"id": tournament_id}, {"_id": 0})
+    if not tournament:
+        return
+    
+    # Create tables for first round
+    players = tournament["registered_players"]
+    tables = []
+    players_per_table = tournament["players_per_table"]
+    
+    for i in range(tournament["num_tables"]):
+        table_players = players[i * players_per_table:(i + 1) * players_per_table]
+        
+        table_id = str(uuid.uuid4())
+        table_doc = {
+            "id": table_id,
+            "tournament_id": tournament_id,
+            "modality": tournament["modality"],
+            "entry_cost": 0,  # Already paid via tournament
+            "max_players": players_per_table,
+            "with_flor": tournament["with_flor"],
+            "points_to_win": tournament["points_to_win"],
+            "is_private": True,
+            "code": None,
+            "players": [
+                {"id": p["id"], "username": p["username"], "team": (idx % 2) + 1}
+                for idx, p in enumerate(table_players)
+            ],
+            "status": "playing",
+            "round": 1,
+            "created_by": tournament["created_by"],
+            "created_at": datetime.now(timezone.utc).isoformat()
+        }
+        await db.tables.insert_one(table_doc)
+        tables.append({"table_id": table_id, "round": 1})
+        
+        # Create game for this table
+        await create_game(table_id)
+    
+    # Update tournament status
+    await db.tournaments.update_one(
+        {"id": tournament_id},
+        {
+            "$set": {
+                "status": "in_progress",
+                "tables": tables,
+                "current_round": 1,
+                "started_at": datetime.now(timezone.utc).isoformat()
+            }
+        }
+    )
+    
+    # Emit tournament started event
+    await sio.emit('tournament_started', {"tournament_id": tournament_id})
+
+@api_router.get("/admin/tournaments")
+async def get_all_tournaments(admin: dict = Depends(get_admin_user)):
+    tournaments = await db.tournaments.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    return tournaments
 
 # ============== GAME LOGIC ==============
 
@@ -768,9 +1111,21 @@ async def get_private_messages(user_id: str, user: dict = Depends(get_current_us
 
 @api_router.post("/chat/admin")
 async def send_admin_message(message: ChatMessage, user: dict = Depends(get_current_user)):
+    """Send private message to/from admin - each user has their own conversation"""
+    # Determine the conversation thread (user_id)
+    if user.get("is_admin"):
+        # Admin replying to a user - need recipient_id
+        if not message.recipient_id:
+            raise HTTPException(status_code=400, detail="recipient_id required for admin reply")
+        thread_user_id = message.recipient_id
+    else:
+        # User messaging admin
+        thread_user_id = user["id"]
+    
     msg_doc = {
         "id": str(uuid.uuid4()),
         "type": "admin_support",
+        "thread_user_id": thread_user_id,  # The user's conversation thread
         "sender_id": user["id"],
         "sender_username": user["username"],
         "content": message.content,
@@ -778,23 +1133,57 @@ async def send_admin_message(message: ChatMessage, user: dict = Depends(get_curr
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.messages.insert_one(msg_doc)
-    return {"message": "Message sent to admin"}
+    
+    # Emit to the user if admin is sending
+    if user.get("is_admin"):
+        await sio.emit('admin_message', msg_doc, room=f"user_{thread_user_id}")
+    
+    return {"message": "Mensaje enviado"}
 
 @api_router.get("/chat/admin")
 async def get_admin_messages(user: dict = Depends(get_current_user)):
+    """Get admin chat messages - user sees their thread, admin sees all threads"""
     if user.get("is_admin"):
-        # Admin sees all support messages
-        messages = await db.messages.find(
-            {"type": "admin_support"},
-            {"_id": 0}
-        ).sort("created_at", -1).limit(200).to_list(200)
+        # Admin sees list of users who have messaged
+        pipeline = [
+            {"$match": {"type": "admin_support"}},
+            {"$group": {
+                "_id": "$thread_user_id",
+                "last_message": {"$last": "$content"},
+                "last_date": {"$last": "$created_at"},
+                "username": {"$last": {"$cond": [{"$eq": ["$is_from_admin", False]}, "$sender_username", "$username"]}}
+            }},
+            {"$sort": {"last_date": -1}}
+        ]
+        threads = await db.messages.aggregate(pipeline).to_list(100)
+        
+        # Get usernames for threads
+        for thread in threads:
+            user_data = await db.users.find_one({"id": thread["_id"]}, {"_id": 0, "username": 1})
+            if user_data:
+                thread["username"] = user_data["username"]
+        
+        return {"threads": threads}
     else:
-        # User sees only their messages
+        # User sees only their conversation
         messages = await db.messages.find(
-            {"type": "admin_support", "sender_id": user["id"]},
+            {"type": "admin_support", "thread_user_id": user["id"]},
             {"_id": 0}
-        ).sort("created_at", -1).limit(50).to_list(50)
-    return list(reversed(messages))
+        ).sort("created_at", 1).limit(100).to_list(100)
+        return {"messages": messages}
+
+@api_router.get("/chat/admin/{user_id}")
+async def get_admin_chat_with_user(user_id: str, admin: dict = Depends(get_admin_user)):
+    """Admin gets specific user's chat thread"""
+    messages = await db.messages.find(
+        {"type": "admin_support", "thread_user_id": user_id},
+        {"_id": 0}
+    ).sort("created_at", 1).limit(100).to_list(100)
+    
+    # Get user info
+    user_info = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    
+    return {"messages": messages, "user": user_info}
 
 # ============== HISTORY ROUTES ==============
 
@@ -854,14 +1243,14 @@ async def disconnect(sid):
         del connected_users[sid]
 
 @sio.event
-async def join_table(sid, data):
+async def join_table_room(sid, data):
     table_id = data.get("table_id")
     if table_id:
         await sio.enter_room(sid, table_id)
         logger.info(f"Client {sid} joined table room {table_id}")
 
 @sio.event
-async def leave_table(sid, data):
+async def leave_table_room(sid, data):
     table_id = data.get("table_id")
     if table_id:
         await sio.leave_room(sid, table_id)

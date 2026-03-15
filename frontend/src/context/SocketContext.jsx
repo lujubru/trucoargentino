@@ -53,13 +53,13 @@ export const SocketProvider = ({ children }) => {
 
   const joinTable = useCallback((tableId) => {
     if (socket && connected) {
-      socket.emit('join_table', { table_id: tableId });
+      socket.emit('join_table_room', { table_id: tableId });
     }
   }, [socket, connected]);
 
   const leaveTable = useCallback((tableId) => {
     if (socket && connected) {
-      socket.emit('leave_table', { table_id: tableId });
+      socket.emit('leave_table_room', { table_id: tableId });
     }
   }, [socket, connected]);
 

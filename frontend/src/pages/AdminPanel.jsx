@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { 
   Users, Wallet, Settings, MessageCircle, Trophy, 
   LogOut, Spade, Check, X, Eye, Ban, UserCheck,
-  Plus, DollarSign, Menu
+  Plus, DollarSign, Menu, ArrowDownToLine, Send
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
@@ -30,10 +30,15 @@ const AdminPanel = () => {
   
   // Data states
   const [deposits, setDeposits] = useState([]);
+  const [withdrawals, setWithdrawals] = useState([]);
   const [users, setUsers] = useState([]);
   const [tables, setTables] = useState([]);
+  const [tournaments, setTournaments] = useState([]);
   const [games, setGames] = useState([]);
-  const [messages, setMessages] = useState([]);
+  const [chatThreads, setChatThreads] = useState([]);
+  const [selectedChatUser, setSelectedChatUser] = useState(null);
+  const [chatMessages, setChatMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
   const [settings, setSettings] = useState({
     private_table_cost: 100,
     platform_commission: 30
@@ -48,10 +53,12 @@ const AdminPanel = () => {
   
   // Modal states
   const [showCreateTable, setShowCreateTable] = useState(false);
+  const [showCreateTournament, setShowCreateTournament] = useState(false);
   const [showReceipt, setShowReceipt] = useState(null);
   
   // Loading states
   const [loading, setLoading] = useState(true);
+  const chatScrollRef = useRef(null);
 
   useEffect(() => {
     fetchAllData();
@@ -59,10 +66,12 @@ const AdminPanel = () => {
 
   const fetchAllData = async () => {
     try {
-      const [depositsRes, usersRes, tablesRes, gamesRes, settingsRes, transferRes, messagesRes] = await Promise.all([
+      const [depositsRes, withdrawalsRes, usersRes, tablesRes, tournamentsRes, gamesRes, settingsRes, transferRes, chatRes] = await Promise.all([
         api.get('/admin/deposits'),
+        api.get('/admin/withdrawals'),
         api.get('/admin/users'),
         api.get('/admin/tables'),
+        api.get('/admin/tournaments'),
         api.get('/admin/games'),
         api.get('/admin/settings'),
         api.get('/cashbank/transfer-data'),
@@ -70,12 +79,14 @@ const AdminPanel = () => {
       ]);
       
       setDeposits(depositsRes.data);
+      setWithdrawals(withdrawalsRes.data);
       setUsers(usersRes.data);
       setTables(tablesRes.data);
+      setTournaments(tournamentsRes.data);
       setGames(gamesRes.data);
       setSettings(settingsRes.data);
       setTransferData(transferRes.data);
-      setMessages(messagesRes.data);
+      setChatThreads(chatRes.data.threads || []);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -97,6 +108,26 @@ const AdminPanel = () => {
     try {
       await api.put(`/admin/deposits/${depositId}`, { status: 'rejected' });
       toast.success('Depósito rechazado');
+      fetchAllData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Error');
+    }
+  };
+
+  const handleApproveWithdrawal = async (withdrawalId) => {
+    try {
+      await api.put(`/admin/withdrawals/${withdrawalId}`, { status: 'approved' });
+      toast.success('Retiro aprobado - Saldo descontado');
+      fetchAllData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Error');
+    }
+  };
+
+  const handleRejectWithdrawal = async (withdrawalId) => {
+    try {
+      await api.put(`/admin/withdrawals/${withdrawalId}`, { status: 'rejected' });
+      toast.success('Retiro rechazado');
       fetchAllData();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Error');
@@ -142,6 +173,44 @@ const AdminPanel = () => {
     }
   };
 
+  const handleCreateTournament = async (formData) => {
+    try {
+      await api.post('/tournaments', formData);
+      toast.success('Torneo creado');
+      setShowCreateTournament(false);
+      fetchAllData();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Error');
+    }
+  };
+
+  const handleSelectChatUser = async (userId) => {
+    try {
+      const res = await api.get(`/chat/admin/${userId}`);
+      setChatMessages(res.data.messages || []);
+      setSelectedChatUser(res.data.user);
+      setTimeout(() => {
+        chatScrollRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    } catch (error) {
+      toast.error('Error al cargar chat');
+    }
+  };
+
+  const handleSendAdminMessage = async () => {
+    if (!newMessage.trim() || !selectedChatUser) return;
+    try {
+      await api.post('/chat/admin', { 
+        content: newMessage, 
+        recipient_id: selectedChatUser.id 
+      });
+      setNewMessage('');
+      handleSelectChatUser(selectedChatUser.id);
+    } catch (error) {
+      toast.error('Error al enviar');
+    }
+  };
+
   const formatMoney = (amount) => {
     return new Intl.NumberFormat('es-AR', {
       style: 'currency',
@@ -152,14 +221,17 @@ const AdminPanel = () => {
 
   const navItems = [
     { id: 'deposits', label: 'Depósitos', icon: Wallet },
+    { id: 'withdrawals', label: 'Retiros', icon: ArrowDownToLine },
     { id: 'users', label: 'Usuarios', icon: Users },
     { id: 'tables', label: 'Mesas', icon: Trophy },
+    { id: 'tournaments', label: 'Torneos', icon: Trophy },
     { id: 'games', label: 'Partidas', icon: Spade },
     { id: 'chat', label: 'Chat', icon: MessageCircle },
     { id: 'settings', label: 'Configuración', icon: Settings }
   ];
 
   const pendingDeposits = deposits.filter(d => d.status === 'pending').length;
+  const pendingWithdrawals = withdrawals.filter(w => w.status === 'pending').length;
 
   return (
     <div className="min-h-screen bg-[#050505] flex">
@@ -188,6 +260,11 @@ const AdminPanel = () => {
               {item.id === 'deposits' && pendingDeposits > 0 && (
                 <span className="ml-auto bg-[#E74C3C] text-white text-xs px-2 py-0.5 rounded-full">
                   {pendingDeposits}
+                </span>
+              )}
+              {item.id === 'withdrawals' && pendingWithdrawals > 0 && (
+                <span className="ml-auto bg-[#E74C3C] text-white text-xs px-2 py-0.5 rounded-full">
+                  {pendingWithdrawals}
                 </span>
               )}
             </button>
@@ -307,6 +384,88 @@ const AdminPanel = () => {
             </motion.div>
           )}
 
+          {/* Withdrawals Tab */}
+          {activeTab === 'withdrawals' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <div className="flex items-center justify-between mb-6">
+                <h1 className="font-display text-2xl text-white">RETIROS PENDIENTES</h1>
+              </div>
+
+              <Tabs defaultValue="pending">
+                <TabsList className="bg-white/5 mb-4">
+                  <TabsTrigger value="pending" className="data-[state=active]:bg-[#E74C3C] data-[state=active]:text-white">
+                    Pendientes ({withdrawals.filter(w => w.status === 'pending').length})
+                  </TabsTrigger>
+                  <TabsTrigger value="approved" className="data-[state=active]:bg-[#2ECC71] data-[state=active]:text-white">
+                    Aprobados
+                  </TabsTrigger>
+                  <TabsTrigger value="rejected" className="data-[state=active]:bg-gray-500 data-[state=active]:text-white">
+                    Rechazados
+                  </TabsTrigger>
+                </TabsList>
+
+                {['pending', 'approved', 'rejected'].map(status => (
+                  <TabsContent key={status} value={status}>
+                    <div className="space-y-3">
+                      {withdrawals.filter(w => w.status === status).length === 0 ? (
+                        <Card className="bg-white/5 border-white/5">
+                          <CardContent className="py-12 text-center">
+                            <p className="text-gray-500">No hay retiros {status === 'pending' ? 'pendientes' : status === 'approved' ? 'aprobados' : 'rechazados'}</p>
+                          </CardContent>
+                        </Card>
+                      ) : (
+                        withdrawals.filter(w => w.status === status).map(withdrawal => (
+                          <Card key={withdrawal.id} className="bg-white/5 border-white/5">
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between">
+                                <div>
+                                  <p className="text-white font-medium">{withdrawal.username}</p>
+                                  <p className="text-[#E74C3C] font-mono text-xl">{formatMoney(withdrawal.amount)}</p>
+                                  <div className="text-gray-400 text-sm mt-1">
+                                    <p>Alias: <span className="text-white">{withdrawal.alias}</span></p>
+                                    <p>Titular: <span className="text-white">{withdrawal.titular_name}</span></p>
+                                    <p className="text-xs text-gray-500 mt-1">
+                                      Saldo al solicitar: {formatMoney(withdrawal.user_balance_at_request)}
+                                    </p>
+                                  </div>
+                                  <p className="text-gray-500 text-xs mt-1">
+                                    {new Date(withdrawal.created_at).toLocaleString()}
+                                  </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {status === 'pending' && (
+                                    <>
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleApproveWithdrawal(withdrawal.id)}
+                                        className="bg-[#2ECC71] hover:bg-[#27AE60]"
+                                        data-testid={`approve-withdrawal-${withdrawal.id}`}
+                                      >
+                                        <Check className="w-4 h-4" />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        onClick={() => handleRejectWithdrawal(withdrawal.id)}
+                                        className="bg-[#E74C3C] hover:bg-[#C0392B]"
+                                        data-testid={`reject-withdrawal-${withdrawal.id}`}
+                                      >
+                                        <X className="w-4 h-4" />
+                                      </Button>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))
+                      )}
+                    </div>
+                  </TabsContent>
+                ))}
+              </Tabs>
+            </motion.div>
+          )}
+
           {/* Users Tab */}
           {activeTab === 'users' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -392,6 +551,68 @@ const AdminPanel = () => {
             </motion.div>
           )}
 
+          {/* Tournaments Tab */}
+          {activeTab === 'tournaments' && (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <div className="flex items-center justify-between mb-6">
+                <h1 className="font-display text-2xl text-white">TORNEOS</h1>
+                <Button 
+                  onClick={() => setShowCreateTournament(true)} 
+                  className="bg-[#2ECC71] hover:bg-[#27AE60]"
+                  data-testid="create-tournament-btn"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Crear Torneo
+                </Button>
+              </div>
+
+              <div className="grid gap-4">
+                {tournaments.length === 0 ? (
+                  <Card className="bg-white/5 border-white/5">
+                    <CardContent className="py-12 text-center">
+                      <Trophy className="w-12 h-12 text-gray-500 mx-auto mb-4" />
+                      <p className="text-gray-400">No hay torneos creados</p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  tournaments.map(tournament => (
+                    <Card key={tournament.id} className="bg-white/5 border-white/5">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <span className="font-display text-lg text-white">{tournament.name}</span>
+                              <span className={`status-badge ${
+                                tournament.status === 'registration' ? 'status-pending' : 
+                                tournament.status === 'in_progress' ? 'status-approved' : 'status-rejected'
+                              }`}>
+                                {tournament.status === 'registration' ? 'INSCRIPCIÓN' : 
+                                 tournament.status === 'in_progress' ? 'EN CURSO' : 'FINALIZADO'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-4 text-sm text-gray-400">
+                              <span>{tournament.modality}</span>
+                              <span>{tournament.num_tables} mesas</span>
+                              <span>{formatMoney(tournament.entry_cost)} entrada</span>
+                              <span>{tournament.with_flor ? 'Con flor' : 'Sin flor'}</span>
+                            </div>
+                            <div className="flex items-center gap-4 text-xs text-gray-500 mt-2">
+                              <span>🥇 {tournament.first_place_percentage}%</span>
+                              <span>🥈 {tournament.second_place_percentage}%</span>
+                              <span className="text-[#FFD700]">
+                                {tournament.registered_players?.length || 0}/{tournament.total_players} jugadores
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </motion.div>
+          )}
+
           {/* Games Tab */}
           {activeTab === 'games' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
@@ -429,31 +650,87 @@ const AdminPanel = () => {
           {/* Chat Tab */}
           {activeTab === 'chat' && (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-              <h1 className="font-display text-2xl text-white mb-6">SOPORTE</h1>
+              <h1 className="font-display text-2xl text-white mb-6">SOPORTE - CHAT PRIVADO</h1>
               
-              <ScrollArea className="h-[600px]">
-                <div className="space-y-3">
-                  {messages.map(msg => (
-                    <Card key={msg.id} className="bg-white/5 border-white/5">
-                      <CardContent className="p-4">
-                        <div className="flex items-start gap-3">
-                          <div className={`w-2 h-2 rounded-full mt-2 ${msg.is_from_admin ? 'bg-[#FFD700]' : 'bg-[#2ECC71]'}`} />
-                          <div>
-                            <p className="text-white text-sm">
-                              <span className="text-[#FFD700]">{msg.sender_username}</span>
-                              {msg.is_from_admin && <span className="text-xs text-gray-500 ml-2">(Admin)</span>}
-                            </p>
-                            <p className="text-gray-300">{msg.content}</p>
-                            <p className="text-gray-500 text-xs mt-1">
-                              {new Date(msg.created_at).toLocaleString()}
-                            </p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+              <div className="grid md:grid-cols-3 gap-6 h-[600px]">
+                {/* User List */}
+                <div className="bg-white/5 rounded-lg border border-white/5 overflow-hidden">
+                  <div className="p-3 border-b border-white/5">
+                    <p className="text-gray-400 text-sm">Conversaciones</p>
+                  </div>
+                  <ScrollArea className="h-[540px]">
+                    {chatThreads.length === 0 ? (
+                      <div className="p-4 text-center text-gray-500">
+                        Sin conversaciones
+                      </div>
+                    ) : (
+                      chatThreads.map(thread => (
+                        <button
+                          key={thread._id}
+                          onClick={() => handleSelectChatUser(thread._id)}
+                          className={`w-full p-3 text-left border-b border-white/5 hover:bg-white/5 transition-colors ${
+                            selectedChatUser?.id === thread._id ? 'bg-white/10' : ''
+                          }`}
+                        >
+                          <p className="text-white font-medium">{thread.username}</p>
+                          <p className="text-gray-500 text-xs truncate">{thread.last_message}</p>
+                          <p className="text-gray-600 text-xs">
+                            {new Date(thread.last_date).toLocaleDateString()}
+                          </p>
+                        </button>
+                      ))
+                    )}
+                  </ScrollArea>
                 </div>
-              </ScrollArea>
+
+                {/* Chat Area */}
+                <div className="md:col-span-2 bg-white/5 rounded-lg border border-white/5 flex flex-col overflow-hidden">
+                  {selectedChatUser ? (
+                    <>
+                      <div className="p-3 border-b border-white/5">
+                        <p className="text-white font-medium">{selectedChatUser.username}</p>
+                        <p className="text-gray-500 text-xs">{selectedChatUser.email}</p>
+                      </div>
+                      <ScrollArea className="flex-1 p-4">
+                        <div className="space-y-3">
+                          {chatMessages.map((msg, idx) => (
+                            <div
+                              key={msg.id || idx}
+                              className={`${msg.is_from_admin ? 'ml-auto' : ''}`}
+                            >
+                              <div className={`chat-bubble ${msg.is_from_admin ? 'sent' : 'received'}`}>
+                                <p className="text-sm">{msg.content}</p>
+                              </div>
+                              <p className={`text-xs text-gray-600 mt-1 ${msg.is_from_admin ? 'text-right' : ''}`}>
+                                {new Date(msg.created_at).toLocaleTimeString()}
+                              </p>
+                            </div>
+                          ))}
+                          <div ref={chatScrollRef} />
+                        </div>
+                      </ScrollArea>
+                      <div className="p-3 border-t border-white/5">
+                        <div className="flex gap-2">
+                          <Input
+                            value={newMessage}
+                            onChange={(e) => setNewMessage(e.target.value)}
+                            onKeyPress={(e) => e.key === 'Enter' && handleSendAdminMessage()}
+                            placeholder="Escribí tu respuesta..."
+                            className="bg-white/5 border-white/10 text-white"
+                          />
+                          <Button onClick={handleSendAdminMessage} className="btn-gold px-4">
+                            <Send className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="flex-1 flex items-center justify-center text-gray-500">
+                      Seleccioná una conversación
+                    </div>
+                  )}
+                </div>
+              </div>
             </motion.div>
           )}
 
@@ -581,6 +858,13 @@ const AdminPanel = () => {
         onCreate={handleCreatePublicTable}
       />
 
+      {/* Create Tournament Modal */}
+      <CreateTournamentModal 
+        open={showCreateTournament} 
+        onClose={() => setShowCreateTournament(false)}
+        onCreate={handleCreateTournament}
+      />
+
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div 
@@ -670,6 +954,168 @@ const CreatePublicTableModal = ({ open, onClose, onCreate }) => {
 
           <Button onClick={handleSubmit} className="w-full btn-gold">
             CREAR MESA
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+// Create Tournament Modal Component
+const CreateTournamentModal = ({ open, onClose, onCreate }) => {
+  const [formData, setFormData] = useState({
+    name: '',
+    modality: '1v1',
+    num_tables: 8,
+    entry_cost: 1000,
+    with_flor: false,
+    points_to_win: 15,
+    first_place_percentage: 50,
+    second_place_percentage: 20
+  });
+
+  const handleSubmit = () => {
+    if (!formData.name.trim()) {
+      return;
+    }
+    onCreate(formData);
+  };
+
+  const modalityPlayers = { '1v1': 2, '2v2': 4, '3v3': 6 };
+  const totalPlayers = formData.num_tables * modalityPlayers[formData.modality];
+  const totalPot = formData.entry_cost * totalPlayers;
+  const netPot = totalPot * 0.7; // 30% commission
+  const firstPrize = netPot * (formData.first_place_percentage / 100);
+  const secondPrize = netPot * (formData.second_place_percentage / 100);
+
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent className="bg-[#0F0F0F] border-white/10 text-white max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="font-display text-xl text-[#2ECC71]">CREAR TORNEO</DialogTitle>
+        </DialogHeader>
+        
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto">
+          <div className="space-y-2">
+            <Label className="text-gray-300">Nombre del torneo</Label>
+            <Input
+              type="text"
+              placeholder="Torneo Nocturno"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              className="bg-white/5 border-white/10 text-white"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-gray-300">Modalidad</Label>
+              <Select
+                value={formData.modality}
+                onValueChange={(val) => setFormData({ ...formData, modality: val })}
+              >
+                <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-[#1A1A1A] border-white/10">
+                  <SelectItem value="1v1" className="text-white">1 vs 1</SelectItem>
+                  <SelectItem value="2v2" className="text-white">2 vs 2</SelectItem>
+                  <SelectItem value="3v3" className="text-white">3 vs 3</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-gray-300">Número de mesas</Label>
+              <Input
+                type="number"
+                value={formData.num_tables}
+                onChange={(e) => setFormData({ ...formData, num_tables: parseInt(e.target.value) || 1 })}
+                className="bg-white/5 border-white/10 text-white"
+                min={2}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-gray-300">Entrada por jugador</Label>
+              <Input
+                type="number"
+                value={formData.entry_cost}
+                onChange={(e) => setFormData({ ...formData, entry_cost: parseFloat(e.target.value) || 0 })}
+                className="bg-white/5 border-white/10 text-white"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-gray-300">Puntos para ganar</Label>
+              <Select
+                value={formData.points_to_win.toString()}
+                onValueChange={(val) => setFormData({ ...formData, points_to_win: parseInt(val) })}
+              >
+                <SelectTrigger className="bg-white/5 border-white/10 text-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="bg-[#1A1A1A] border-white/10">
+                  <SelectItem value="15" className="text-white">15 puntos</SelectItem>
+                  <SelectItem value="30" className="text-white">30 puntos</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label className="text-gray-300">Premio 1° (%)</Label>
+              <Input
+                type="number"
+                value={formData.first_place_percentage}
+                onChange={(e) => setFormData({ ...formData, first_place_percentage: parseFloat(e.target.value) || 0 })}
+                className="bg-white/5 border-white/10 text-white"
+                max={100}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label className="text-gray-300">Premio 2° (%)</Label>
+              <Input
+                type="number"
+                value={formData.second_place_percentage}
+                onChange={(e) => setFormData({ ...formData, second_place_percentage: parseFloat(e.target.value) || 0 })}
+                className="bg-white/5 border-white/10 text-white"
+                max={100}
+              />
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between p-4 bg-white/5 rounded-lg">
+            <Label className="text-white">Con Flor</Label>
+            <Switch
+              checked={formData.with_flor}
+              onCheckedChange={(val) => setFormData({ ...formData, with_flor: val })}
+            />
+          </div>
+
+          {/* Preview */}
+          <div className="bg-white/5 p-4 rounded-lg space-y-2">
+            <p className="text-gray-400 text-sm">Vista previa:</p>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <span className="text-gray-500">Total jugadores:</span>
+              <span className="text-white">{totalPlayers}</span>
+              <span className="text-gray-500">Pozo total:</span>
+              <span className="text-white">${totalPot.toLocaleString()}</span>
+              <span className="text-gray-500">Comisión (30%):</span>
+              <span className="text-gray-400">${(totalPot * 0.3).toLocaleString()}</span>
+              <span className="text-gray-500">🥇 Premio 1°:</span>
+              <span className="text-[#FFD700]">${firstPrize.toLocaleString()}</span>
+              <span className="text-gray-500">🥈 Premio 2°:</span>
+              <span className="text-gray-300">${secondPrize.toLocaleString()}</span>
+            </div>
+          </div>
+
+          <Button onClick={handleSubmit} className="w-full bg-[#2ECC71] hover:bg-[#27AE60]">
+            CREAR TORNEO
           </Button>
         </div>
       </DialogContent>

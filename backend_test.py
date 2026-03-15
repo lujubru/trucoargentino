@@ -228,7 +228,43 @@ class TrucoAPITester:
         
         return deposit_id
 
-    def test_admin_functions(self, deposit_id=None):
+    def test_withdrawal_system(self):
+        """Test withdrawal system (NEW FEATURE)"""
+        print("\n💸 WITHDRAWAL SYSTEM")
+        print("-" * 30)
+        
+        # Create withdrawal request
+        withdrawal_data = {
+            "amount": 500.0,
+            "alias": "test.alias.banco",
+            "titular_name": "Test User"
+        }
+        success, response = self.run_test(
+            "Create Withdrawal Request",
+            "POST",
+            "cashbank/withdrawal",
+            200,
+            data=withdrawal_data,
+            description="Create withdrawal request"
+        )
+        
+        withdrawal_id = None
+        if success and 'id' in response:
+            withdrawal_id = response['id']
+            print(f"   💸 Withdrawal ID: {withdrawal_id}")
+        
+        # Get user withdrawals
+        self.run_test(
+            "Get User Withdrawals",
+            "GET", 
+            "cashbank/withdrawals",
+            200,
+            description="List user's withdrawals"
+        )
+        
+        return withdrawal_id
+
+    def test_admin_functions(self, deposit_id=None, withdrawal_id=None):
         """Test admin-only functions"""
         print("\n👨‍💼 ADMIN FUNCTIONS")
         print("-" * 30)
@@ -244,6 +280,15 @@ class TrucoAPITester:
             "admin/deposits",
             200,
             description="Admin view all deposits"
+        )
+        
+        # Get all withdrawals (NEW FEATURE)
+        self.run_test(
+            "Admin - Get All Withdrawals",
+            "GET",
+            "admin/withdrawals",
+            200,
+            description="Admin view all withdrawals"
         )
         
         # Get all users
@@ -264,6 +309,17 @@ class TrucoAPITester:
                 200,
                 data={"status": "approved"},
                 description="Admin approve deposit"
+            )
+        
+        # Approve withdrawal if we have one (NEW FEATURE)
+        if withdrawal_id:
+            self.run_test(
+                "Admin - Approve Withdrawal",
+                "PUT",
+                f"admin/withdrawals/{withdrawal_id}",
+                200,
+                data={"status": "approved"},
+                description="Admin approve withdrawal"
             )
         
         # Get admin settings
@@ -365,6 +421,83 @@ class TrucoAPITester:
         
         self.token = original_token
         return public_table_id, table_code
+        
+    def test_tournament_system(self):
+        """Test tournament system (NEW FEATURE)"""
+        print("\n🏆 TOURNAMENT SYSTEM")
+        print("-" * 30)
+        
+        # Get available tournaments (user view)
+        self.run_test(
+            "Get Available Tournaments",
+            "GET",
+            "tournaments",
+            200,
+            description="List available tournaments"
+        )
+        
+        # Switch to admin to create tournament
+        original_token = self.token
+        self.token = self.admin_token
+        
+        # Create tournament
+        tournament_data = {
+            "name": "Test Tournament",
+            "modality": "1v1",
+            "num_tables": 4,
+            "entry_cost": 1000.0,
+            "with_flor": False,
+            "points_to_win": 15,
+            "first_place_percentage": 50,
+            "second_place_percentage": 20
+        }
+        
+        success, response = self.run_test(
+            "Admin - Create Tournament",
+            "POST",
+            "tournaments",
+            200,
+            data=tournament_data,
+            description="Admin create tournament"
+        )
+        
+        tournament_id = None
+        if success and 'id' in response:
+            tournament_id = response['id']
+            print(f"   🏆 Tournament ID: {tournament_id}")
+        
+        # Get all tournaments (admin view)
+        self.run_test(
+            "Admin - Get All Tournaments",
+            "GET",
+            "admin/tournaments",
+            200,
+            description="Admin view all tournaments"
+        )
+        
+        # Switch back to user token
+        self.token = original_token
+        
+        # Test tournament registration
+        if tournament_id:
+            success, response = self.run_test(
+                "Join Tournament",
+                "POST",
+                f"tournaments/{tournament_id}/join",
+                200,
+                description="User join tournament"
+            )
+            
+            # Test tournament cancellation
+            self.run_test(
+                "Cancel Tournament Registration",
+                "POST",
+                f"tournaments/{tournament_id}/cancel",
+                200,
+                description="User cancel tournament"
+            )
+        
+        return tournament_id
 
     def test_chat_system(self):
         """Test chat functionality"""
@@ -400,6 +533,15 @@ class TrucoAPITester:
             200,
             data=support_data,
             description="Send message to admin support"
+        )
+        
+        # Get admin chat messages (user view)
+        self.run_test(
+            "Get Admin Chat Messages",
+            "GET",
+            "chat/admin",
+            200,
+            description="Get admin chat messages"
         )
 
     def test_history_endpoints(self):
@@ -444,11 +586,19 @@ class TrucoAPITester:
             
             # Core functionality
             deposit_id = self.test_cashbank_system()
+            withdrawal_id = self.test_withdrawal_system()  # NEW FEATURE
             
             if self.admin_token:
-                self.test_admin_functions(deposit_id)
+                self.test_admin_functions(deposit_id, withdrawal_id)  # Updated params
+            
+            # Give user some balance for withdrawal test
+            if deposit_id and self.admin_token:
+                print("   💰 User now has balance after approved deposit")
+            
+            withdrawal_id = self.test_withdrawal_system()  # NEW FEATURE (test again with balance)
             
             public_table_id, table_code = self.test_table_system()
+            tournament_id = self.test_tournament_system()  # NEW FEATURE
             self.test_chat_system() 
             self.test_history_endpoints()
             
