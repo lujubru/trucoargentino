@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  ArrowLeft, MessageCircle, Users, 
+  ArrowLeft, MessageCircle, Users, Trophy,
   Send, Volume2, VolumeX, Flower2
 } from 'lucide-react';
 import { Button } from '../components/ui/button';
@@ -101,8 +101,13 @@ const GameTable = () => {
     } else {
       toast.info(`No quiero... ${data.points_awarded} punto(s) para el equipo ${data.winner_team}`);
     }
-    handleGameUpdate();
-  }, [handleGameUpdate]);
+    // If game finished, fetchGameData will update the state
+    if (data.game_finished) {
+      fetchGameData();
+    } else {
+      handleGameUpdate();
+    }
+  }, [handleGameUpdate, fetchGameData]);
 
   const handleEnvidoCalled = useCallback((data) => {
     const myTeam = game?.players?.find(p => p.id === user?.id)?.team;
@@ -119,13 +124,23 @@ const GameTable = () => {
     } else {
       toast.info(`No quiero... ${data.points_awarded} punto(s) para el equipo ${data.winner_team}`);
     }
-    handleGameUpdate();
-  }, [handleGameUpdate]);
+    // If game finished, fetchGameData will update the state
+    if (data.game_finished) {
+      fetchGameData();
+    } else {
+      handleGameUpdate();
+    }
+  }, [handleGameUpdate, fetchGameData]);
 
   const handleFlorCalled = useCallback((data) => {
     toast.success(`¡FLOR! ${data.caller_username} tiene flor (+3 puntos)`, { duration: 4000 });
-    handleGameUpdate();
-  }, [handleGameUpdate]);
+    // If game finished, fetchGameData will update the state
+    if (data.game_finished) {
+      fetchGameData();
+    } else {
+      handleGameUpdate();
+    }
+  }, [handleGameUpdate, fetchGameData]);
 
   const handleTableChat = useCallback((msg) => {
     setChatMessages(prev => [...prev, msg]);
@@ -305,6 +320,62 @@ const GameTable = () => {
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Volver al lobby
+          </Button>
+        </motion.div>
+      </div>
+    );
+  }
+
+  // Game finished
+  if (game?.status === 'finished' || table?.status === 'finished') {
+    const myScore = myTeam === 1 ? game?.team1_score : game?.team2_score;
+    const theirScore = myTeam === 1 ? game?.team2_score : game?.team1_score;
+    const iWon = game?.winner_team === myTeam;
+    
+    return (
+      <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center p-6">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          className="text-center max-w-md"
+        >
+          <div className={`w-24 h-24 rounded-full mx-auto mb-6 flex items-center justify-center ${
+            iWon ? 'bg-[#2ECC71]/20' : 'bg-[#E74C3C]/20'
+          }`}>
+            <Trophy className={`w-12 h-12 ${iWon ? 'text-[#FFD700]' : 'text-gray-500'}`} />
+          </div>
+          
+          <h1 className={`font-display text-4xl mb-2 ${
+            iWon ? 'text-[#FFD700]' : 'text-[#E74C3C]'
+          }`}>
+            {iWon ? '¡GANASTE!' : 'PERDISTE'}
+          </h1>
+          
+          <p className="text-gray-400 mb-8">
+            {iWon ? '¡Felicitaciones por la victoria!' : 'Mejor suerte la próxima'}
+          </p>
+          
+          <div className="bg-white/5 p-6 rounded-xl mb-8">
+            <p className="text-gray-400 text-sm mb-4">Resultado Final</p>
+            <div className="flex items-center justify-center gap-8">
+              <div className="text-center">
+                <p className="text-xs text-[#2ECC71] mb-1">VOS</p>
+                <p className="font-mono text-4xl text-white">{myScore || 0}</p>
+              </div>
+              <span className="text-gray-600 text-2xl">-</span>
+              <div className="text-center">
+                <p className="text-xs text-[#E74C3C] mb-1">ELLOS</p>
+                <p className="font-mono text-4xl text-white">{theirScore || 0}</p>
+              </div>
+            </div>
+          </div>
+          
+          <Button
+            onClick={() => navigate('/dashboard')}
+            className="btn-gold px-8 py-3"
+            data-testid="back-to-dashboard-btn"
+          >
+            Volver al Lobby
           </Button>
         </motion.div>
       </div>
