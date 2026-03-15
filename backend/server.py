@@ -1633,10 +1633,13 @@ async def respond_truco(sid, data):
         else:
             game["team2_score"] += points
         
-        # Check game end
+        # Check game end FIRST
+        game_finished = False
+        winner_team = None
         if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
             game["status"] = "finished"
             winner_team = 1 if game["team1_score"] >= game["points_to_win"] else 2
+            game_finished = True
             
             await db.games.update_one(
                 {"id": game_id},
@@ -1648,19 +1651,23 @@ async def respond_truco(sid, data):
                     "truco_pending_response": False
                 }}
             )
-            
-            await finish_game(game, winner_team)
-        else:
-            # Start new round
-            await start_new_round(game)
         
         await sio.emit('truco_response', {
             "game_id": game_id,
             "responder_id": user_id,
             "response": response,
             "points_awarded": points,
-            "winner_team": caller_team
+            "winner_team": caller_team,
+            "game_finished": game_finished
         }, room=game["table_id"])
+        
+        if game_finished:
+            await finish_game(game, winner_team)
+            return {"success": True, "game_finished": True}
+        else:
+            # Start new round only if game continues
+            await start_new_round(game)
+            await sio.emit('game_update', {"game_id": game_id}, room=game["table_id"])
     
     elif response == "quiero":
         # Game continues with current truco points
@@ -1839,20 +1846,26 @@ async def respond_envido(sid, data):
             }}
         )
         
-        # Check game end
+        # Check game end BEFORE emitting response
+        game_finished = False
         if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
             winner_team = 1 if game["team1_score"] >= game["points_to_win"] else 2
             game["status"] = "finished"
             await db.games.update_one({"id": game_id}, {"$set": {"status": "finished"}})
-            await finish_game(game, winner_team)
+            game_finished = True
         
         await sio.emit('envido_response', {
             "game_id": game_id,
             "responder_id": user_id,
             "response": response,
             "points_awarded": rejected_points,
-            "winner_team": caller_team
+            "winner_team": caller_team,
+            "game_finished": game_finished
         }, room=game["table_id"])
+        
+        if game_finished:
+            await finish_game(game, winner_team)
+            return {"success": True, "game_finished": True}
     
     elif response == "quiero":
         # Compare envido points of both teams
@@ -1900,12 +1913,14 @@ async def respond_envido(sid, data):
             }}
         )
         
-        # Check game end
+        # Check game end BEFORE emitting response
+        game_finished = False
+        final_winner = None
         if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
             final_winner = 1 if game["team1_score"] >= game["points_to_win"] else 2
             game["status"] = "finished"
             await db.games.update_one({"id": game_id}, {"$set": {"status": "finished"}})
-            await finish_game(game, final_winner)
+            game_finished = True
         
         await sio.emit('envido_response', {
             "game_id": game_id,
@@ -1914,8 +1929,13 @@ async def respond_envido(sid, data):
             "team1_envido": team1_envido,
             "team2_envido": team2_envido,
             "winner_team": winner_team,
-            "points_awarded": points
+            "points_awarded": points,
+            "game_finished": game_finished
         }, room=game["table_id"])
+        
+        if game_finished:
+            await finish_game(game, final_winner)
+            return {"success": True, "game_finished": True}
     
     await sio.emit('game_update', {"game_id": game_id}, room=game["table_id"])
     return {"success": True}
@@ -1984,12 +2004,14 @@ async def call_flor(sid, data):
         }}
     )
     
-    # Check game end
+    # Check game end FIRST
+    game_finished = False
+    winner_team = None
     if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
         winner_team = 1 if game["team1_score"] >= game["points_to_win"] else 2
         game["status"] = "finished"
         await db.games.update_one({"id": game_id}, {"$set": {"status": "finished"}})
-        await finish_game(game, winner_team)
+        game_finished = True
     
     await sio.emit('flor_called', {
         "game_id": game_id,
@@ -1997,8 +2019,13 @@ async def call_flor(sid, data):
         "caller_username": caller.get("username", "Jugador"),
         "caller_team": caller_team,
         "points_awarded": 3,
-        "flor_points": player_hand.get("flor_points", 0)
+        "flor_points": player_hand.get("flor_points", 0),
+        "game_finished": game_finished
     }, room=game["table_id"])
+    
+    if game_finished:
+        await finish_game(game, winner_team)
+        return {"success": True, "game_finished": True}
     
     await sio.emit('game_update', {"game_id": game_id}, room=game["table_id"])
     return {"success": True}
