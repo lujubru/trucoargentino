@@ -949,6 +949,16 @@ def check_flor(cards):
         suits[suit] = suits.get(suit, 0) + 1
     return any(count == 3 for count in suits.values())
 
+def calculate_flor_points(cards):
+    """Calculate flor points (sum of 3 cards of same suit + 20)."""
+    # Flor = 3 cards same suit, value = sum of card values + 20
+    # Cards 10, 11, 12 count as 0
+    total = 0
+    for card in cards:
+        if card["number"] <= 7:
+            total += card["number"]
+    return total + 20
+
 async def create_game(table_id: str):
     """Create a new game for a table."""
     table = await db.tables.find_one({"id": table_id}, {"_id": 0})
@@ -964,11 +974,14 @@ async def create_game(table_id: str):
     players_hands = {}
     for i, player in enumerate(table["players"]):
         hand = deck[i*3:(i+1)*3]
+        has_flor = check_flor(hand) if table["with_flor"] else False
         players_hands[player["id"]] = {
             "cards": hand,
             "played_cards": [],
             "envido_points": calculate_envido_points(hand),
-            "has_flor": check_flor(hand) if table["with_flor"] else False
+            "has_flor": has_flor,
+            "flor_points": calculate_flor_points(hand) if has_flor else 0,
+            "flor_announced": False  # Track if flor was announced
         }
     
     # Random first player (mano)
@@ -987,13 +1000,21 @@ async def create_game(table_id: str):
         "current_turn": table["players"][mano_index]["id"],
         "round_cards": [],  # Cards played in current round
         "hand_results": [],  # Results of each hand (3 per round)
+        "first_card_played": False,  # Track if first card was played (for envido)
         "truco_state": None,  # None, "truco", "retruco", "vale_cuatro"
         "truco_caller": None,
+        "truco_caller_team": None,
         "truco_points": 1,
+        "truco_pending_response": False,  # Waiting for quiero/no quiero
         "envido_state": None,
         "envido_points": 0,
         "envido_caller": None,
+        "envido_caller_team": None,
+        "envido_pending_response": False,
+        "envido_resolved": False,  # Envido was resolved (can't call again)
         "flor_state": None,
+        "flor_points": 0,
+        "flor_resolved": False,
         "status": "playing",
         "points_to_win": table["points_to_win"],
         "with_flor": table["with_flor"],
@@ -1255,6 +1276,103 @@ async def leave_table_room(sid, data):
     if table_id:
         await sio.leave_room(sid, table_id)
 
+def determine_hand_winner(round_cards, players, mano_player_id):
+    """
+    Determine the winner of a hand (mano).
+    Returns (winner_player, winner_team, is_parda)
+    
+    In case of tie (parda):
+    - If it's hand 1 or 2: it's a tie, resolved later
+    - The player who played first (closer to mano) wins in case of tie
+    """
+    if not round_cards:
+        return None, None, False
+    
+    # Find max card value
+    max_value = max(c["card"]["value"] for c in round_cards)
+    
+    # Find all cards with max value
+    tied_cards = [c for c in round_cards if c["card"]["value"] == max_value]
+    
+    if len(tied_cards) == 1:
+        # Clear winner
+        winner_id = tied_cards[0]["player_id"]
+        winner_player = next(p for p in players if p["id"] == winner_id)
+        return winner_player, winner_player["team"], False
+    
+    # Tie (parda) - the card played first wins (closer to mano in turn order)
+    # Find the order of players starting from mano
+    mano_index = next(i for i, p in enumerate(players) if p["id"] == mano_player_id)
+    player_order = {}
+    for i, p in enumerate(players):
+        # Calculate distance from mano
+        order = (i - mano_index) % len(players)
+        player_order[p["id"]] = order
+    
+    # Among tied cards, find who played first
+    first_tied = min(tied_cards, key=lambda c: player_order[c["player_id"]])
+    winner_id = first_tied["player_id"]
+    winner_player = next(p for p in players if p["id"] == winner_id)
+    
+    return winner_player, winner_player["team"], True
+
+
+def calculate_round_winner(hand_results, mano_player_id, players):
+    """
+    Calculate the winner of a round based on hand results.
+    
+    Rules:
+    - Best of 3 hands
+    - If tie in hand 1: decided by hand 2 winner
+    - If tie in hand 2: hand 1 winner takes the round
+    - If tie in hand 3: if hand 1 was tied, hand 2 winner wins; otherwise hand 1 winner wins
+    - Multiple ties: "mano" (first player) wins
+    """
+    team1_wins = 0
+    team2_wins = 0
+    ties = 0
+    first_winner_team = None
+    
+    for i, result in enumerate(hand_results):
+        if result.get("is_parda", False):
+            ties += 1
+        elif result["winner_team"] == 1:
+            team1_wins += 1
+            if first_winner_team is None:
+                first_winner_team = 1
+        else:
+            team2_wins += 1
+            if first_winner_team is None:
+                first_winner_team = 2
+    
+    # Someone got 2 wins
+    if team1_wins >= 2:
+        return 1
+    if team2_wins >= 2:
+        return 2
+    
+    # 3 hands played
+    if len(hand_results) >= 3:
+        # If we're here, no one has 2 wins
+        # Cases: 1-1-tie, 1-tie-tie, tie-1-1, tie-tie-1, etc.
+        
+        if team1_wins > team2_wins:
+            return 1
+        elif team2_wins > team1_wins:
+            return 2
+        else:
+            # Equal wins (could be 1-1-tie or tie-tie-1 or all ties)
+            if first_winner_team:
+                return first_winner_team
+            else:
+                # All ties - mano wins
+                mano = next(p for p in players if p["id"] == mano_player_id)
+                return mano["team"]
+    
+    # Less than 3 hands and no clear winner yet
+    return None
+
+
 @sio.event
 async def play_card(sid, data):
     user_id = connected_users.get(sid)
@@ -1265,8 +1383,15 @@ async def play_card(sid, data):
     card_index = data.get("card_index")
     
     game = await db.games.find_one({"id": game_id}, {"_id": 0})
-    if not game or game["current_turn"] != user_id:
+    if not game:
+        return {"error": "Game not found"}
+    
+    if game["current_turn"] != user_id:
         return {"error": "Not your turn"}
+    
+    # Can't play card if waiting for truco/envido response
+    if game.get("truco_pending_response") or game.get("envido_pending_response"):
+        return {"error": "Waiting for response to call"}
     
     player_hand = game["players_hands"].get(user_id)
     if not player_hand or card_index >= len(player_hand["cards"]):
@@ -1282,33 +1407,43 @@ async def play_card(sid, data):
         "card": card
     })
     
+    # Mark first card played (for envido restriction)
+    if not game.get("first_card_played"):
+        game["first_card_played"] = True
+    
     # Determine next turn
     players = game["players"]
     current_index = next(i for i, p in enumerate(players) if p["id"] == user_id)
     next_index = (current_index + 1) % len(players)
     
-    # Check if hand is complete (all players played)
+    # Check if hand is complete (all players played one card)
     if len(game["round_cards"]) == len(players):
-        # Determine hand winner
-        winning_card = max(game["round_cards"], key=lambda x: x["card"]["value"])
-        winning_player = next(p for p in players if p["id"] == winning_card["player_id"])
+        # Determine hand winner with parda logic
+        winner_player, winner_team, is_parda = determine_hand_winner(
+            game["round_cards"], 
+            players, 
+            game["mano_player_id"]
+        )
         
         game["hand_results"].append({
-            "winner_id": winning_player["id"],
-            "winner_team": winning_player["team"],
-            "cards": game["round_cards"]
+            "winner_id": winner_player["id"] if winner_player else None,
+            "winner_team": winner_team,
+            "is_parda": is_parda,
+            "cards": game["round_cards"].copy()
         })
         
-        # Check if round is complete (best of 3 hands)
-        team1_wins = sum(1 for h in game["hand_results"] if h["winner_team"] == 1)
-        team2_wins = sum(1 for h in game["hand_results"] if h["winner_team"] == 2)
+        # Check if round is complete
+        round_winner = calculate_round_winner(
+            game["hand_results"], 
+            game["mano_player_id"],
+            players
+        )
         
-        if team1_wins >= 2 or team2_wins >= 2 or len(game["hand_results"]) >= 3:
-            # Round complete
-            round_winner_team = 1 if team1_wins > team2_wins else 2
+        if round_winner is not None:
+            # Round complete - award points
             points = game["truco_points"]
             
-            if round_winner_team == 1:
+            if round_winner == 1:
                 game["team1_score"] += points
             else:
                 game["team2_score"] += points
@@ -1316,15 +1451,35 @@ async def play_card(sid, data):
             # Check game end
             if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
                 game["status"] = "finished"
-                winner_team = 1 if game["team1_score"] >= game["points_to_win"] else 2
-                await finish_game(game, winner_team)
+                final_winner = 1 if game["team1_score"] >= game["points_to_win"] else 2
+                
+                # Update game state before finish
+                await db.games.update_one(
+                    {"id": game_id},
+                    {"$set": {
+                        "players_hands": game["players_hands"],
+                        "round_cards": [],
+                        "hand_results": game["hand_results"],
+                        "current_hand": game["current_hand"],
+                        "team1_score": game["team1_score"],
+                        "team2_score": game["team2_score"],
+                        "status": "finished",
+                        "first_card_played": game["first_card_played"]
+                    }}
+                )
+                
+                await finish_game(game, final_winner)
+                await sio.emit('game_update', {"game_id": game_id}, room=game["table_id"])
+                return {"success": True}
             else:
                 # New round
                 await start_new_round(game)
+                await sio.emit('game_update', {"game_id": game_id}, room=game["table_id"])
+                return {"success": True}
         else:
-            # Next hand
+            # Next hand - winner of this hand starts
             game["round_cards"] = []
-            game["current_turn"] = winning_player["id"]
+            game["current_turn"] = winner_player["id"]
             game["current_hand"] += 1
     else:
         game["current_turn"] = players[next_index]["id"]
@@ -1341,7 +1496,8 @@ async def play_card(sid, data):
             "team1_score": game["team1_score"],
             "team2_score": game["team2_score"],
             "truco_points": game["truco_points"],
-            "status": game["status"]
+            "status": game["status"],
+            "first_card_played": game["first_card_played"]
         }}
     )
     
@@ -1352,6 +1508,14 @@ async def play_card(sid, data):
 
 @sio.event
 async def call_truco(sid, data):
+    """
+    Handle truco calls: truco, retruco, vale_cuatro
+    
+    Rules:
+    - Anyone can call truco initially
+    - Only the opposing team can raise (retruco, vale_cuatro)
+    - Can't raise your own team's call
+    """
     user_id = connected_users.get(sid)
     if not user_id:
         return {"error": "Not authenticated"}
@@ -1363,15 +1527,41 @@ async def call_truco(sid, data):
     if not game:
         return {"error": "Game not found"}
     
-    # Validate call
-    valid_calls = {
-        None: ["truco"],
-        "truco": ["retruco"],
-        "retruco": ["vale_cuatro"]
-    }
+    if game["status"] != "playing":
+        return {"error": "Game not in progress"}
     
-    if call_type not in valid_calls.get(game["truco_state"], []):
-        return {"error": "Invalid call"}
+    # Get caller's team
+    caller = next((p for p in game["players"] if p["id"] == user_id), None)
+    if not caller:
+        return {"error": "Not in this game"}
+    caller_team = caller["team"]
+    
+    # Validate the call sequence
+    current_state = game.get("truco_state")
+    current_caller_team = game.get("truco_caller_team")
+    
+    # Can't call if waiting for response to previous call
+    if game.get("truco_pending_response"):
+        # Can only raise if you're the opposing team
+        if caller_team == current_caller_team:
+            return {"error": "Esperando respuesta del oponente"}
+    
+    if call_type == "truco":
+        if current_state is not None:
+            return {"error": "Ya se cantó truco"}
+    elif call_type == "retruco":
+        if current_state != "truco":
+            return {"error": "Primero hay que cantar truco"}
+        # Only the team that was challenged can raise
+        if caller_team == current_caller_team:
+            return {"error": "No podés subir tu propia apuesta"}
+    elif call_type == "vale_cuatro":
+        if current_state != "retruco":
+            return {"error": "Primero hay que cantar retruco"}
+        if caller_team == current_caller_team:
+            return {"error": "No podés subir tu propia apuesta"}
+    else:
+        return {"error": "Invalid call type"}
     
     points_map = {"truco": 2, "retruco": 3, "vale_cuatro": 4}
     
@@ -1380,20 +1570,33 @@ async def call_truco(sid, data):
         {"$set": {
             "truco_state": call_type,
             "truco_caller": user_id,
-            "truco_points": points_map[call_type]
+            "truco_caller_team": caller_team,
+            "truco_points": points_map[call_type],
+            "truco_pending_response": True
         }}
     )
     
     await sio.emit('truco_called', {
         "game_id": game_id,
         "caller_id": user_id,
-        "call_type": call_type
+        "caller_username": caller.get("username", "Jugador"),
+        "caller_team": caller_team,
+        "call_type": call_type,
+        "points": points_map[call_type]
     }, room=game["table_id"])
     
     return {"success": True}
 
 @sio.event
 async def respond_truco(sid, data):
+    """
+    Handle response to truco: quiero, no_quiero
+    
+    Rules:
+    - Only opposing team can respond
+    - "no_quiero": caller team wins points from PREVIOUS level
+    - "quiero": game continues with new point value
+    """
     user_id = connected_users.get(sid)
     if not user_id:
         return {"error": "Not authenticated"}
@@ -1402,15 +1605,28 @@ async def respond_truco(sid, data):
     response = data.get("response")  # quiero, no_quiero
     
     game = await db.games.find_one({"id": game_id}, {"_id": 0})
-    if not game or not game["truco_state"]:
+    if not game or not game.get("truco_state"):
         return {"error": "No truco to respond to"}
     
+    if not game.get("truco_pending_response"):
+        return {"error": "No pending truco call"}
+    
+    # Get responder's team
+    responder = next((p for p in game["players"] if p["id"] == user_id), None)
+    if not responder:
+        return {"error": "Not in this game"}
+    
+    # Can only respond if you're on the opposing team
+    if responder["team"] == game.get("truco_caller_team"):
+        return {"error": "Solo el equipo contrario puede responder"}
+    
     if response == "no_quiero":
-        # Opponent wins with previous points
+        # Caller team wins with PREVIOUS level points
+        # truco rechazado = 1 punto, retruco rechazado = 2 puntos, vale4 rechazado = 3 puntos
         prev_points = {"truco": 1, "retruco": 2, "vale_cuatro": 3}
         points = prev_points.get(game["truco_state"], 1)
         
-        caller_team = next(p["team"] for p in game["players"] if p["id"] == game["truco_caller"])
+        caller_team = game.get("truco_caller_team")
         
         if caller_team == 1:
             game["team1_score"] += points
@@ -1421,30 +1637,59 @@ async def respond_truco(sid, data):
         if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
             game["status"] = "finished"
             winner_team = 1 if game["team1_score"] >= game["points_to_win"] else 2
+            
+            await db.games.update_one(
+                {"id": game_id},
+                {"$set": {
+                    "team1_score": game["team1_score"],
+                    "team2_score": game["team2_score"],
+                    "status": "finished",
+                    "truco_state": None,
+                    "truco_pending_response": False
+                }}
+            )
+            
             await finish_game(game, winner_team)
         else:
+            # Start new round
             await start_new_round(game)
+        
+        await sio.emit('truco_response', {
+            "game_id": game_id,
+            "responder_id": user_id,
+            "response": response,
+            "points_awarded": points,
+            "winner_team": caller_team
+        }, room=game["table_id"])
     
-    await db.games.update_one(
-        {"id": game_id},
-        {"$set": {
-            "truco_state": None if response == "no_quiero" else game["truco_state"],
-            "team1_score": game["team1_score"],
-            "team2_score": game["team2_score"],
-            "status": game["status"]
-        }}
-    )
-    
-    await sio.emit('truco_response', {
-        "game_id": game_id,
-        "responder_id": user_id,
-        "response": response
-    }, room=game["table_id"])
+    elif response == "quiero":
+        # Game continues with current truco points
+        await db.games.update_one(
+            {"id": game_id},
+            {"$set": {
+                "truco_pending_response": False
+            }}
+        )
+        
+        await sio.emit('truco_response', {
+            "game_id": game_id,
+            "responder_id": user_id,
+            "response": response,
+            "current_points": game["truco_points"]
+        }, room=game["table_id"])
     
     return {"success": True}
 
 @sio.event
 async def call_envido(sid, data):
+    """
+    Handle envido calls: envido, real_envido, falta_envido
+    
+    Rules:
+    - Can ONLY be called BEFORE the first card is played
+    - Can be called in sequence: envido -> envido -> real_envido -> falta_envido
+    - Points accumulate (envido+envido = 4, envido+real_envido = 5, etc.)
+    """
     user_id = connected_users.get(sid)
     if not user_id:
         return {"error": "Not authenticated"}
@@ -1453,33 +1698,311 @@ async def call_envido(sid, data):
     call_type = data.get("call_type")  # envido, real_envido, falta_envido
     
     game = await db.games.find_one({"id": game_id}, {"_id": 0})
-    if not game or game["current_hand"] != 1:
-        return {"error": "Envido can only be called in first hand"}
+    if not game:
+        return {"error": "Game not found"}
     
-    points_map = {
-        "envido": 2,
-        "real_envido": 3,
-        "falta_envido": game["points_to_win"] - max(game["team1_score"], game["team2_score"])
-    }
+    if game["status"] != "playing":
+        return {"error": "Game not in progress"}
     
-    new_points = game.get("envido_points", 0) + points_map.get(call_type, 0)
+    # CRITICAL: Envido can ONLY be called before first card is played
+    if game.get("first_card_played", False):
+        return {"error": "El envido solo se puede cantar antes de jugar la primera carta"}
+    
+    # Can't call if already resolved
+    if game.get("envido_resolved", False):
+        return {"error": "El envido ya fue jugado en esta ronda"}
+    
+    # Get caller's team
+    caller = next((p for p in game["players"] if p["id"] == user_id), None)
+    if not caller:
+        return {"error": "Not in this game"}
+    caller_team = caller["team"]
+    
+    current_state = game.get("envido_state")
+    current_caller_team = game.get("envido_caller_team")
+    current_points = game.get("envido_points", 0)
+    
+    # Validate call sequence
+    # envido can be called twice (envido + envido = 4 points)
+    # real_envido can follow envido
+    # falta_envido can follow any
+    
+    points_to_add = 0
+    if call_type == "envido":
+        if current_state == "real_envido":
+            return {"error": "No se puede cantar envido después de real envido"}
+        if current_state == "falta_envido":
+            return {"error": "No se puede cantar envido después de falta envido"}
+        points_to_add = 2
+    elif call_type == "real_envido":
+        if current_state == "falta_envido":
+            return {"error": "No se puede cantar real envido después de falta envido"}
+        points_to_add = 3
+    elif call_type == "falta_envido":
+        # Falta envido = points to reach winning score
+        losing_team_score = min(game["team1_score"], game["team2_score"])
+        points_to_add = game["points_to_win"] - losing_team_score
+    else:
+        return {"error": "Invalid call type"}
+    
+    # If raising, must be opposing team
+    if current_state and caller_team == current_caller_team:
+        return {"error": "No podés subir tu propia apuesta de envido"}
+    
+    new_points = current_points + points_to_add
     
     await db.games.update_one(
         {"id": game_id},
         {"$set": {
             "envido_state": call_type,
             "envido_caller": user_id,
-            "envido_points": new_points
+            "envido_caller_team": caller_team,
+            "envido_points": new_points,
+            "envido_pending_response": True
         }}
     )
     
     await sio.emit('envido_called', {
         "game_id": game_id,
         "caller_id": user_id,
-        "call_type": call_type
+        "caller_username": caller.get("username", "Jugador"),
+        "caller_team": caller_team,
+        "call_type": call_type,
+        "total_points": new_points
     }, room=game["table_id"])
     
     return {"success": True}
+
+
+@sio.event
+async def respond_envido(sid, data):
+    """
+    Handle response to envido: quiero, no_quiero
+    
+    Rules:
+    - "no_quiero": caller team wins 1 point (or previous accumulated if raised)
+    - "quiero": compare envido points, winner gets the accumulated points
+    """
+    user_id = connected_users.get(sid)
+    if not user_id:
+        return {"error": "Not authenticated"}
+    
+    game_id = data.get("game_id")
+    response = data.get("response")  # quiero, no_quiero
+    
+    game = await db.games.find_one({"id": game_id}, {"_id": 0})
+    if not game or not game.get("envido_state"):
+        return {"error": "No envido to respond to"}
+    
+    if not game.get("envido_pending_response"):
+        return {"error": "No pending envido call"}
+    
+    # Get responder's team
+    responder = next((p for p in game["players"] if p["id"] == user_id), None)
+    if not responder:
+        return {"error": "Not in this game"}
+    
+    if responder["team"] == game.get("envido_caller_team"):
+        return {"error": "Solo el equipo contrario puede responder"}
+    
+    caller_team = game.get("envido_caller_team")
+    
+    if response == "no_quiero":
+        # Caller team wins 1 point (or less if multiple calls were made)
+        # If only envido was called: 1 point
+        # If envido+envido: 2 points, etc.
+        rejected_points = max(1, game.get("envido_points", 2) - 2 + 1)
+        if game.get("envido_state") == "envido" and game.get("envido_points", 0) == 2:
+            rejected_points = 1
+        else:
+            # Calculate based on previous state
+            rejected_points = max(1, game.get("envido_points", 2) - 1)
+            if rejected_points > 2:
+                rejected_points = game.get("envido_points", 2) - 2
+        
+        # Simplified: rejected envido = 1 point to caller
+        rejected_points = 1
+        
+        if caller_team == 1:
+            game["team1_score"] += rejected_points
+        else:
+            game["team2_score"] += rejected_points
+        
+        await db.games.update_one(
+            {"id": game_id},
+            {"$set": {
+                "envido_state": None,
+                "envido_pending_response": False,
+                "envido_resolved": True,
+                "team1_score": game["team1_score"],
+                "team2_score": game["team2_score"]
+            }}
+        )
+        
+        # Check game end
+        if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
+            winner_team = 1 if game["team1_score"] >= game["points_to_win"] else 2
+            game["status"] = "finished"
+            await db.games.update_one({"id": game_id}, {"$set": {"status": "finished"}})
+            await finish_game(game, winner_team)
+        
+        await sio.emit('envido_response', {
+            "game_id": game_id,
+            "responder_id": user_id,
+            "response": response,
+            "points_awarded": rejected_points,
+            "winner_team": caller_team
+        }, room=game["table_id"])
+    
+    elif response == "quiero":
+        # Compare envido points of both teams
+        players = game["players"]
+        players_hands = game["players_hands"]
+        
+        # Get max envido for each team
+        team1_envido = 0
+        team2_envido = 0
+        
+        for player in players:
+            hand = players_hands.get(player["id"], {})
+            envido_pts = hand.get("envido_points", 0)
+            if player["team"] == 1:
+                if envido_pts > team1_envido:
+                    team1_envido = envido_pts
+            else:
+                if envido_pts > team2_envido:
+                    team2_envido = envido_pts
+        
+        # Determine winner (tie goes to "mano")
+        points = game.get("envido_points", 2)
+        if team1_envido > team2_envido:
+            winner_team = 1
+        elif team2_envido > team1_envido:
+            winner_team = 2
+        else:
+            # Tie - mano wins
+            mano = next(p for p in players if p["id"] == game["mano_player_id"])
+            winner_team = mano["team"]
+        
+        if winner_team == 1:
+            game["team1_score"] += points
+        else:
+            game["team2_score"] += points
+        
+        await db.games.update_one(
+            {"id": game_id},
+            {"$set": {
+                "envido_state": None,
+                "envido_pending_response": False,
+                "envido_resolved": True,
+                "team1_score": game["team1_score"],
+                "team2_score": game["team2_score"]
+            }}
+        )
+        
+        # Check game end
+        if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
+            final_winner = 1 if game["team1_score"] >= game["points_to_win"] else 2
+            game["status"] = "finished"
+            await db.games.update_one({"id": game_id}, {"$set": {"status": "finished"}})
+            await finish_game(game, final_winner)
+        
+        await sio.emit('envido_response', {
+            "game_id": game_id,
+            "responder_id": user_id,
+            "response": response,
+            "team1_envido": team1_envido,
+            "team2_envido": team2_envido,
+            "winner_team": winner_team,
+            "points_awarded": points
+        }, room=game["table_id"])
+    
+    await sio.emit('game_update', {"game_id": game_id}, room=game["table_id"])
+    return {"success": True}
+
+
+@sio.event
+async def call_flor(sid, data):
+    """
+    Handle flor call - 3 cards of the same suit = 3 points automatic
+    
+    Rules:
+    - Flor = 3 cards of the same suit
+    - Worth 3 points (automatic, no response needed)
+    - Can only be called before first card is played
+    - Must be enabled in game settings (with_flor)
+    """
+    user_id = connected_users.get(sid)
+    if not user_id:
+        return {"error": "Not authenticated"}
+    
+    game_id = data.get("game_id")
+    
+    game = await db.games.find_one({"id": game_id}, {"_id": 0})
+    if not game:
+        return {"error": "Game not found"}
+    
+    if not game.get("with_flor"):
+        return {"error": "Flor not enabled in this game"}
+    
+    if game.get("first_card_played"):
+        return {"error": "La flor solo se puede cantar antes de jugar"}
+    
+    if game.get("flor_resolved"):
+        return {"error": "La flor ya fue cantada en esta ronda"}
+    
+    # Get caller's hand
+    caller = next((p for p in game["players"] if p["id"] == user_id), None)
+    if not caller:
+        return {"error": "Not in this game"}
+    
+    player_hand = game["players_hands"].get(user_id, {})
+    
+    if not player_hand.get("has_flor"):
+        return {"error": "No tenés flor"}
+    
+    if player_hand.get("flor_announced"):
+        return {"error": "Ya cantaste flor"}
+    
+    # Mark flor as announced for this player
+    game["players_hands"][user_id]["flor_announced"] = True
+    
+    # Award 3 points to the caller's team
+    caller_team = caller["team"]
+    if caller_team == 1:
+        game["team1_score"] += 3
+    else:
+        game["team2_score"] += 3
+    
+    await db.games.update_one(
+        {"id": game_id},
+        {"$set": {
+            "players_hands": game["players_hands"],
+            "flor_resolved": True,
+            "team1_score": game["team1_score"],
+            "team2_score": game["team2_score"]
+        }}
+    )
+    
+    # Check game end
+    if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
+        winner_team = 1 if game["team1_score"] >= game["points_to_win"] else 2
+        game["status"] = "finished"
+        await db.games.update_one({"id": game_id}, {"$set": {"status": "finished"}})
+        await finish_game(game, winner_team)
+    
+    await sio.emit('flor_called', {
+        "game_id": game_id,
+        "caller_id": user_id,
+        "caller_username": caller.get("username", "Jugador"),
+        "caller_team": caller_team,
+        "points_awarded": 3,
+        "flor_points": player_hand.get("flor_points", 0)
+    }, room=game["table_id"])
+    
+    await sio.emit('game_update', {"game_id": game_id}, room=game["table_id"])
+    return {"success": True}
+
 
 @sio.event
 async def table_chat(sid, data):
@@ -1520,11 +2043,14 @@ async def start_new_round(game):
     players_hands = {}
     for i, player in enumerate(game["players"]):
         hand = deck[i*3:(i+1)*3]
+        has_flor = check_flor(hand) if game["with_flor"] else False
         players_hands[player["id"]] = {
             "cards": hand,
             "played_cards": [],
             "envido_points": calculate_envido_points(hand),
-            "has_flor": check_flor(hand) if game["with_flor"] else False
+            "has_flor": has_flor,
+            "flor_points": calculate_flor_points(hand) if has_flor else 0,
+            "flor_announced": False
         }
     
     # Rotate mano
@@ -1542,12 +2068,21 @@ async def start_new_round(game):
             "current_turn": new_mano,
             "round_cards": [],
             "hand_results": [],
+            "first_card_played": False,
             "truco_state": None,
             "truco_caller": None,
+            "truco_caller_team": None,
             "truco_points": 1,
+            "truco_pending_response": False,
             "envido_state": None,
             "envido_points": 0,
-            "envido_caller": None
+            "envido_caller": None,
+            "envido_caller_team": None,
+            "envido_pending_response": False,
+            "envido_resolved": False,
+            "flor_state": None,
+            "flor_points": 0,
+            "flor_resolved": False
         }}
     )
 
