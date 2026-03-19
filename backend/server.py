@@ -1755,50 +1755,68 @@ async def start_new_round(game):
     )
 
 async def finish_game(game, winner_team):
+    """Finish game, distribute prizes and guarantee type safety to prevent frontend crashes."""
+    # Aseguramos que el equipo ganador sea tratado como un número entero (1 o 2)
+    final_winner_team = int(winner_team)
+    
     table = await db.tables.find_one({"id": game["table_id"]}, {"_id": 0})
-    if not table: return
+    if not table:
+        return
     
     settings = await db.settings.find_one({"type": "admin_settings"}, {"_id": 0})
-    commission = settings.get("platform_commission", 30) if settings else 30
+    # Forzamos float para evitar errores matemáticos que rompan el script silenciosamente
+    commission = float(settings.get("platform_commission", 30)) if settings else 30.0
     
-    total_pot = table["entry_cost"] * len(table["players"])
-    prize_pool = total_pot * (100 - commission) / 100
+    entry_cost = float(table.get("entry_cost", 0.0))
+    total_pot = entry_cost * len(table["players"])
+    prize_pool = total_pot * (100.0 - commission) / 100.0
     
-    winners = [p for p in game["players"] if p["team"] == winner_team]
-    prize_per_winner = prize_pool / len(winners) if winners else 0
+    # Filtramos asegurándonos de que el team de cada jugador se trate también como int
+    winners = [p for p in game["players"] if int(p.get("team", 0)) == final_winner_team]
+    
+    # Prevenimos ZeroDivisionError por si ocurre algún fallo de sincronización
+    prize_per_winner = float(prize_pool / len(winners)) if len(winners) > 0 else 0.0
     
     for winner in winners:
-        await db.users.update_one({"id": winner["id"]}, {"$inc": {"cashbank": prize_per_winner}})
+        # Repartimos el premio incrementando el cashbank
+        await db.users.update_one(
+            {"id": winner["id"]},
+            {"$inc": {"cashbank": prize_per_winner}}
+        )
+        # Registramos la transacción
         await db.transactions.insert_one({
             "id": str(uuid.uuid4()),
             "user_id": winner["id"],
             "type": "game_win",
             "amount": prize_per_winner,
-            "description": f"Won game {game['id']}",
+            "description": f"Premio partida ganada {game['id']}",
             "created_at": datetime.now(timezone.utc).isoformat()
         })
     
+    # Actualizamos los estados en base de datos
     await db.games.update_one(
         {"id": game["id"]},
         {"$set": {
             "status": "finished",
-            "winner_team": winner_team,
+            "winner_team": final_winner_team,
             "prize_pool": prize_pool,
             "finished_at": datetime.now(timezone.utc).isoformat()
         }}
     )
-    await db.tables.update_one({"id": game["table_id"]}, {"$set": {"status": "finished"}})
     
+    await db.tables.update_one(
+        {"id": game["table_id"]},
+        {"$set": {"status": "finished"}}
+    )
+    
+    # Emitimos el evento de finalización al frontend con datos limpios y tipados
     await sio.emit('game_finished', {
         "game_id": game["id"],
-        "winner_team": winner_team,
-        "team1_score": game["team1_score"],
-        "team2_score": game["team2_score"],
+        "winner_team": final_winner_team,
+        "team1_score": int(game["team1_score"]),
+        "team2_score": int(game["team2_score"]),
         "prize_per_winner": prize_per_winner
     }, room=game["table_id"])
-
-# ============== ROOT ROUTES ==============
-
 @api_router.get("/")
 async def root():
     return {"message": "Truco Argentino API", "version": "1.0.0"}
