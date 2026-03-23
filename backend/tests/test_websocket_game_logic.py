@@ -11,7 +11,7 @@ import asyncio
 import time
 import os
 
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://truco-live.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://truco-wallet-app.preview.emergentagent.com').rstrip('/')
 ADMIN_EMAIL = "admin@trucoargentino.com"
 ADMIN_PASSWORD = "admin123"
 

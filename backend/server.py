@@ -1443,8 +1443,9 @@ async def call_envido(sid, data):
     if not game or game["status"] != "playing":
         return {"error": "Game not in progress"}
     
-    if game.get("first_card_played", False):
-        return {"error": "El envido solo se puede cantar antes de jugar la primera carta"}
+    # Envido solo se puede cantar en la primera mano (hand 1)
+    if game.get("current_hand", 1) > 1:
+        return {"error": "El envido solo se puede cantar en la primera mano"}
     if game.get("envido_resolved", False):
         return {"error": "El envido ya fue jugado en esta ronda"}
     
@@ -1677,6 +1678,68 @@ async def call_flor(sid, data):
         
     await sio.emit('game_update', {"game_id": game_id}, room=game["table_id"])
     return {"success": True}
+
+
+@sio.event
+async def irse_al_mazo(sid, data):
+    """Irse al mazo - el jugador/equipo se rinde y el oponente gana la ronda."""
+    user_id = connected_users.get(sid)
+    if not user_id: return {"error": "Not authenticated"}
+    
+    game_id = data.get("game_id")
+    game = await db.games.find_one({"id": game_id}, {"_id": 0})
+    if not game or game["status"] != "playing":
+        return {"error": "Game not in progress"}
+    
+    player = next((p for p in game["players"] if p["id"] == user_id), None)
+    if not player: return {"error": "Not in this game"}
+    
+    player_team = player["team"]
+    winner_team = 2 if player_team == 1 else 1
+    
+    # Los puntos que gana el oponente dependen del estado del truco
+    points = game.get("truco_points", 1)
+    
+    if winner_team == 1:
+        game["team1_score"] += points
+    else:
+        game["team2_score"] += points
+    
+    game_finished = False
+    final_winner = None
+    if game["team1_score"] >= game["points_to_win"] or game["team2_score"] >= game["points_to_win"]:
+        final_winner = 1 if game["team1_score"] >= game["points_to_win"] else 2
+        game["status"] = "finished"
+        game_finished = True
+    
+    await db.games.update_one(
+        {"id": game_id},
+        {"$set": {
+            "team1_score": game["team1_score"],
+            "team2_score": game["team2_score"],
+            "status": "finished" if game_finished else "playing"
+        }}
+    )
+    
+    await sio.emit('mazo', {
+        "game_id": game_id,
+        "player_id": user_id,
+        "player_username": player.get("username", "Jugador"),
+        "player_team": player_team,
+        "winner_team": winner_team,
+        "points_awarded": points,
+        "game_finished": game_finished
+    }, room=game["table_id"])
+    
+    if game_finished:
+        await finish_game(game, final_winner)
+        return {"success": True, "game_finished": True}
+    else:
+        await start_new_round(game)
+        await sio.emit('game_update', {"game_id": game_id}, room=game["table_id"])
+    
+    return {"success": True}
+
 
 @sio.event
 async def table_chat(sid, data):

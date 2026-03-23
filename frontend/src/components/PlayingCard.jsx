@@ -1,26 +1,24 @@
 import { motion } from 'framer-motion';
 
-// Spanish card suit symbols and colors
+// Spanish card suit configuration - authentic colors
 const SUITS = {
-  espadas: { name: 'Espadas', color: '#1B4D3E' },
-  bastos: { name: 'Bastos', color: '#2D5016' },
-  oros: { name: 'Oros', color: '#DAA520' },
-  copas: { name: 'Copas', color: '#DC143C' }
+  espadas: { name: 'Espadas', color: '#1a5276', bgColor: '#d4e6f1' },
+  bastos: { name: 'Bastos', color: '#1e8449', bgColor: '#d5f5e3' },
+  oros: { name: 'Oros', color: '#b7950b', bgColor: '#fdebd0' },
+  copas: { name: 'Copas', color: '#922b21', bgColor: '#fadbd8' }
 };
 
-// Simplified suit icons for mobile
+// Traditional Spanish card suit SVG icons
 const SuitIcon = ({ suit, size = 24 }) => {
-  const color = SUITS[suit]?.color || '#333';
-  
   if (suit === 'espadas') {
     return (
       <svg width={size} height={size} viewBox="0 0 100 100">
-        <path 
-          d="M50 10 L60 50 L75 50 L50 90 L25 50 L40 50 Z" 
-          fill={color}
-          stroke="#000"
-          strokeWidth="3"
-        />
+        {/* Espada - Traditional sword design */}
+        <line x1="50" y1="8" x2="50" y2="72" stroke="#1a5276" strokeWidth="6" strokeLinecap="round"/>
+        <polygon points="50,8 42,22 50,18 58,22" fill="#1a5276"/>
+        <line x1="35" y1="62" x2="65" y2="62" stroke="#1a5276" strokeWidth="5" strokeLinecap="round"/>
+        <ellipse cx="50" cy="72" rx="8" ry="4" fill="#1a5276"/>
+        <rect x="46" y="72" width="8" height="20" rx="2" fill="#1a5276"/>
       </svg>
     );
   }
@@ -28,9 +26,12 @@ const SuitIcon = ({ suit, size = 24 }) => {
   if (suit === 'bastos') {
     return (
       <svg width={size} height={size} viewBox="0 0 100 100">
-        <rect x="40" y="15" width="20" height="70" rx="6" fill={color} stroke="#000" strokeWidth="3"/>
-        <ellipse cx="50" cy="30" rx="25" ry="12" fill="#228B22" stroke="#000" strokeWidth="2"/>
-        <ellipse cx="50" cy="70" rx="25" ry="12" fill="#228B22" stroke="#000" strokeWidth="2"/>
+        {/* Basto - Traditional club/stick */}
+        <rect x="44" y="15" width="12" height="65" rx="4" fill="#5d4037" stroke="#3e2723" strokeWidth="2"/>
+        <ellipse cx="50" cy="22" rx="18" ry="10" fill="#2e7d32" stroke="#1b5e20" strokeWidth="1.5"/>
+        <ellipse cx="50" cy="22" rx="12" ry="6" fill="#43a047"/>
+        <ellipse cx="50" cy="75" rx="14" ry="8" fill="#2e7d32" stroke="#1b5e20" strokeWidth="1.5"/>
+        <rect x="43" y="82" width="14" height="8" rx="3" fill="#5d4037" stroke="#3e2723" strokeWidth="1"/>
       </svg>
     );
   }
@@ -38,9 +39,16 @@ const SuitIcon = ({ suit, size = 24 }) => {
   if (suit === 'oros') {
     return (
       <svg width={size} height={size} viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="38" fill={color} stroke="#B8860B" strokeWidth="4"/>
-        <circle cx="50" cy="50" r="22" fill="#FFD700" stroke="#B8860B" strokeWidth="3"/>
-        <circle cx="50" cy="50" r="10" fill={color}/>
+        {/* Oro - Traditional gold coin */}
+        <circle cx="50" cy="50" r="36" fill="#f9a825" stroke="#f57f17" strokeWidth="3"/>
+        <circle cx="50" cy="50" r="28" fill="#fdd835" stroke="#f9a825" strokeWidth="2"/>
+        <circle cx="50" cy="50" r="18" fill="#ffee58" stroke="#fdd835" strokeWidth="1.5"/>
+        <circle cx="50" cy="50" r="8" fill="#f9a825"/>
+        {/* Rayos decorativos */}
+        <line x1="50" y1="16" x2="50" y2="22" stroke="#f57f17" strokeWidth="2"/>
+        <line x1="50" y1="78" x2="50" y2="84" stroke="#f57f17" strokeWidth="2"/>
+        <line x1="16" y1="50" x2="22" y2="50" stroke="#f57f17" strokeWidth="2"/>
+        <line x1="78" y1="50" x2="84" y2="50" stroke="#f57f17" strokeWidth="2"/>
       </svg>
     );
   }
@@ -48,14 +56,12 @@ const SuitIcon = ({ suit, size = 24 }) => {
   if (suit === 'copas') {
     return (
       <svg width={size} height={size} viewBox="0 0 100 100">
-        <path 
-          d="M25 25 Q25 65 50 75 Q75 65 75 25 L25 25" 
-          fill={color}
-          stroke="#000"
-          strokeWidth="3"
-        />
-        <rect x="43" y="73" width="14" height="15" fill={color} stroke="#000" strokeWidth="2"/>
-        <ellipse cx="50" cy="92" rx="18" ry="6" fill={color} stroke="#000" strokeWidth="2"/>
+        {/* Copa - Traditional chalice/cup */}
+        <path d="M30 20 Q30 55 50 65 Q70 55 70 20 Z" fill="#c0392b" stroke="#922b21" strokeWidth="2"/>
+        <path d="M35 24 Q35 50 50 58 Q65 50 65 24 Z" fill="#e74c3c"/>
+        <rect x="45" y="65" width="10" height="12" fill="#922b21" stroke="#7b241c" strokeWidth="1"/>
+        <ellipse cx="50" cy="82" rx="16" ry="6" fill="#922b21" stroke="#7b241c" strokeWidth="1.5"/>
+        <ellipse cx="50" cy="82" rx="11" ry="3.5" fill="#c0392b"/>
       </svg>
     );
   }
@@ -63,48 +69,45 @@ const SuitIcon = ({ suit, size = 24 }) => {
   return null;
 };
 
-const PlayingCard = ({ card, size = 'md', onClick, selected, disabled }) => {
-  const sizeClasses = {
-    sm: 'w-12 h-18 md:w-16 md:h-24',
-    md: 'w-16 h-24 md:w-20 md:h-30',
-    lg: 'w-20 h-30 md:w-24 md:h-36'
-  };
-  
-  const iconSizes = {
-    sm: 20,
-    md: 28,
-    lg: 36
+// Get figure name for Spanish cards
+const getFigureName = (number) => {
+  if (number === 10) return 'SOTA';
+  if (number === 11) return 'CABALLO';
+  if (number === 12) return 'REY';
+  return null;
+};
+
+const PlayingCard = ({ card, size = 'md', onClick, selected, disabled, faceDown }) => {
+  // Mobile-first sizes
+  const sizeConfig = {
+    xs: { w: 'w-10', h: 'h-[60px]', iconSize: 16, fontSize: 'text-[10px]', cornerSize: 8, figSize: 'text-[7px]' },
+    sm: { w: 'w-12', h: 'h-[72px]', iconSize: 20, fontSize: 'text-xs', cornerSize: 10, figSize: 'text-[8px]' },
+    md: { w: 'w-14', h: 'h-[84px]', iconSize: 26, fontSize: 'text-sm', cornerSize: 12, figSize: 'text-[9px]' },
+    lg: { w: 'w-[68px]', h: 'h-[100px]', iconSize: 32, fontSize: 'text-base', cornerSize: 14, figSize: 'text-[10px]' },
   };
 
+  const cfg = sizeConfig[size] || sizeConfig.md;
+
   // Card back
-  if (!card || card.hidden) {
+  if (!card || card.hidden || faceDown) {
     return (
       <div 
-        className={`
-          ${sizeClasses[size]} rounded-lg shadow-xl cursor-pointer
-          bg-gradient-to-br from-[#8B4513] via-[#A0522D] to-[#654321]
-          border-2 border-[#654321]
-          flex items-center justify-center
-          ${selected ? 'ring-2 ring-[#FFD700]' : ''}
-        `}
+        className={`${cfg.w} ${cfg.h} rounded-lg shadow-lg cursor-default flex-shrink-0
+          bg-gradient-to-br from-[#1a237e] via-[#283593] to-[#1a237e]
+          border border-[#5c6bc0]/50`}
         onClick={onClick}
-        style={{
-          boxShadow: '0 4px 15px rgba(0,0,0,0.4)'
-        }}
+        style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.4)' }}
       >
-        <div className="w-full h-full flex items-center justify-center p-2 rounded">
-          <div className="w-full h-full rounded border-2 border-[#FFD700]/30 flex items-center justify-center"
+        <div className="w-full h-full flex items-center justify-center p-1 rounded-lg">
+          <div className="w-full h-full rounded border border-[#7986cb]/40 flex items-center justify-center"
             style={{
-              backgroundImage: `repeating-linear-gradient(
-                90deg,
-                transparent,
-                transparent 3px,
-                rgba(255,215,0,0.1) 3px,
-                rgba(255,215,0,0.1) 6px
-              )`
+              backgroundImage: `repeating-conic-gradient(#3949ab 0% 25%, #283593 0% 50%)`,
+              backgroundSize: '8px 8px'
             }}
           >
-            <span className="text-3xl">🃏</span>
+            <div className="bg-[#1a237e] rounded-full w-5 h-5 flex items-center justify-center border border-[#7986cb]/50">
+              <span className="text-[#7986cb] text-[8px] font-bold">T</span>
+            </div>
           </div>
         </div>
       </div>
@@ -112,93 +115,66 @@ const PlayingCard = ({ card, size = 'md', onClick, selected, disabled }) => {
   }
 
   const suit = SUITS[card.suit];
-  
-  const getDisplayNumber = (num) => {
-    if (num === 10) return '10';
-    if (num === 11) return '11';
-    if (num === 12) return '12';
-    return num;
-  };
+  const figureName = getFigureName(card.number);
+  const isSpecial = (card.number === 1 && (card.suit === 'espadas' || card.suit === 'bastos')) ||
+                    (card.number === 7 && (card.suit === 'espadas' || card.suit === 'oros'));
 
   return (
     <motion.div
-      whileHover={!disabled ? { scale: 1.05 } : {}}
-      whileTap={!disabled ? { scale: 0.95 } : {}}
+      whileHover={!disabled ? { y: -4, scale: 1.03 } : {}}
+      whileTap={!disabled ? { scale: 0.97 } : {}}
       className={`
-        ${sizeClasses[size]} rounded-lg shadow-2xl cursor-pointer relative overflow-hidden
-        bg-gradient-to-br from-[#FFFEF0] via-white to-[#F5F0DC]
-        border-2 border-gray-400
-        ${selected ? 'ring-4 ring-[#FFD700]' : ''}
-        ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
+        ${cfg.w} ${cfg.h} rounded-lg shadow-lg cursor-pointer relative overflow-hidden flex-shrink-0
+        bg-gradient-to-b from-[#FFFFF0] to-[#F5F0DC]
+        border-2 ${selected ? 'border-yellow-400' : 'border-gray-300'}
+        ${disabled ? 'opacity-60 cursor-not-allowed' : ''}
       `}
       onClick={!disabled ? onClick : undefined}
       style={{
         boxShadow: selected 
-          ? '0 15px 40px rgba(255, 215, 0, 0.6), 0 0 20px rgba(255, 215, 0, 0.4)' 
-          : '0 6px 20px rgba(0, 0, 0, 0.4)'
+          ? '0 0 12px rgba(255, 215, 0, 0.7), 0 4px 12px rgba(0,0,0,0.3)' 
+          : '0 2px 8px rgba(0, 0, 0, 0.3)'
       }}
     >
-      {/* Card background subtle pattern */}
-      <div className="absolute inset-0 opacity-5"
-        style={{
-          backgroundImage: `repeating-linear-gradient(
-            45deg,
-            transparent,
-            transparent 8px,
-            rgba(0,0,0,0.02) 8px,
-            rgba(0,0,0,0.02) 16px
-          )`
-        }}
-      />
-
       {/* Top left corner */}
-      <div className="absolute top-1 left-1.5 flex flex-col items-center z-10">
-        <span 
-          className={`font-bold ${size === 'lg' ? 'text-xl' : size === 'md' ? 'text-base' : 'text-sm'} leading-none`}
-          style={{ color: suit?.color }}
-        >
-          {getDisplayNumber(card.number)}
+      <div className="absolute top-0.5 left-1 flex flex-col items-center z-10 leading-none">
+        <span className={`font-black ${cfg.fontSize}`} style={{ color: suit?.color }}>
+          {card.number}
         </span>
-        <div className="mt-0.5">
-          <SuitIcon suit={card.suit} size={iconSizes[size] * 0.5} />
-        </div>
+        <SuitIcon suit={card.suit} size={cfg.cornerSize} />
       </div>
 
-      {/* Center - Large suit icon */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <SuitIcon suit={card.suit} size={iconSizes[size] * 1.8} />
+      {/* Center - Main suit icon */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <SuitIcon suit={card.suit} size={cfg.iconSize * 1.4} />
+        {figureName && (
+          <span className={`${cfg.figSize} font-bold mt-0.5 tracking-wider`} style={{ color: suit?.color }}>
+            {figureName}
+          </span>
+        )}
       </div>
 
       {/* Bottom right corner (rotated) */}
-      <div className="absolute bottom-1 right-1.5 flex flex-col items-center rotate-180 z-10">
-        <span 
-          className={`font-bold ${size === 'lg' ? 'text-xl' : size === 'md' ? 'text-base' : 'text-sm'} leading-none`}
-          style={{ color: suit?.color }}
-        >
-          {getDisplayNumber(card.number)}
+      <div className="absolute bottom-0.5 right-1 flex flex-col items-center rotate-180 z-10 leading-none">
+        <span className={`font-black ${cfg.fontSize}`} style={{ color: suit?.color }}>
+          {card.number}
         </span>
-        <div className="mt-0.5">
-          <SuitIcon suit={card.suit} size={iconSizes[size] * 0.5} />
-        </div>
+        <SuitIcon suit={card.suit} size={cfg.cornerSize} />
       </div>
 
-      {/* Special card indicator */}
-      {((card.number === 1 && (card.suit === 'espadas' || card.suit === 'bastos')) ||
-        (card.number === 7 && (card.suit === 'espadas' || card.suit === 'oros'))) && (
-        <div className="absolute top-0 right-0 w-4 h-4 bg-[#FFD700] rounded-bl-lg z-10">
-          <div className="absolute inset-0 flex items-center justify-center">
-            <span className="text-[8px] text-[#0f2818] font-bold">★</span>
-          </div>
+      {/* Special card indicator (gold star for high-value cards) */}
+      {isSpecial && (
+        <div className="absolute top-0 right-0 w-3 h-3 bg-[#FFD700] rounded-bl-md z-10 flex items-center justify-center">
+          <span className="text-[6px] text-[#0f2818] font-bold">★</span>
         </div>
       )}
 
-      {/* Shine effect for selected card */}
+      {/* Selected glow */}
       {selected && (
         <motion.div
-          className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/40 to-transparent"
-          initial={{ x: '-100%' }}
-          animate={{ x: '100%' }}
-          transition={{ duration: 0.6, repeat: Infinity, repeatDelay: 1 }}
+          className="absolute inset-0 bg-gradient-to-tr from-yellow-400/20 via-transparent to-yellow-400/20 rounded-lg"
+          animate={{ opacity: [0.3, 0.6, 0.3] }}
+          transition={{ duration: 1.5, repeat: Infinity }}
         />
       )}
     </motion.div>

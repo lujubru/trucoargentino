@@ -117,6 +117,15 @@ export const SocketProvider = ({ children }) => {
     return Promise.reject('Not connected');
   }, [socket, connected]);
 
+  const irseAlMazo = useCallback((gameId) => {
+    if (socket && connected) {
+      return new Promise((resolve) => {
+        socket.emit('irse_al_mazo', { game_id: gameId }, resolve);
+      });
+    }
+    return Promise.reject('Not connected');
+  }, [socket, connected]);
+
   const sendTableChat = useCallback((tableId, message, isTeamOnly = false) => {
     if (socket && connected) {
       socket.emit('table_chat', { table_id: tableId, message, is_team_only: isTeamOnly });
@@ -135,6 +144,7 @@ export const SocketProvider = ({ children }) => {
       callEnvido,
       respondEnvido,
       callFlor,
+      irseAlMazo,
       sendTableChat
     }}>
       {children}
