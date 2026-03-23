@@ -66,27 +66,38 @@ const AdminPanel = () => {
 
   const fetchAllData = async () => {
     try {
-      const [depositsRes, withdrawalsRes, usersRes, tablesRes, tournamentsRes, gamesRes, settingsRes, transferRes, chatRes] = await Promise.all([
-        api.get('/admin/deposits'),
-        api.get('/admin/withdrawals'),
-        api.get('/admin/users'),
-        api.get('/admin/tables'),
-        api.get('/admin/tournaments'),
-        api.get('/admin/games'),
-        api.get('/admin/settings'),
-        api.get('/cashbank/transfer-data'),
-        api.get('/chat/admin')
+      // Hacer cada llamada de forma independiente para que si una falla no rompa las demás
+      const safeGet = async (url, fallback = []) => {
+        try {
+          const res = await api.get(url);
+          return res.data;
+        } catch (err) {
+          console.warn(`Error fetching ${url}:`, err?.message);
+          return fallback;
+        }
+      };
+
+      const [depositsData, withdrawalsData, usersData, tablesData, tournamentsData, gamesData, settingsData, transferData, chatData] = await Promise.all([
+        safeGet('/admin/deposits'),
+        safeGet('/admin/withdrawals'),
+        safeGet('/admin/users'),
+        safeGet('/admin/tables'),
+        safeGet('/admin/tournaments'),
+        safeGet('/admin/games'),
+        safeGet('/admin/settings', { private_table_cost: 100, platform_commission: 30 }),
+        safeGet('/cashbank/transfer-data', {}),
+        safeGet('/chat/admin', { threads: [] })
       ]);
       
-      setDeposits(depositsRes.data);
-      setWithdrawals(withdrawalsRes.data);
-      setUsers(usersRes.data);
-      setTables(tablesRes.data);
-      setTournaments(tournamentsRes.data);
-      setGames(gamesRes.data);
-      setSettings(settingsRes.data);
-      setTransferData(transferRes.data);
-      setChatThreads(chatRes.data.threads || []);
+      setDeposits(depositsData);
+      setWithdrawals(withdrawalsData);
+      setUsers(usersData);
+      setTables(tablesData);
+      setTournaments(tournamentsData);
+      setGames(gamesData);
+      setSettings(settingsData);
+      setTransferData(transferData);
+      setChatThreads(chatData.threads || []);
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {

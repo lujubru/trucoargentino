@@ -1049,6 +1049,52 @@ async def get_private_messages(user_id: str, user: dict = Depends(get_current_us
     ).sort("created_at", -1).limit(100).to_list(100)
     return list(reversed(messages))
 
+
+@api_router.get("/chat/admin")
+async def get_admin_chat_threads(user: dict = Depends(get_current_user)):
+    """Get all private chat threads for admin support."""
+    # Get all unique users who have sent private messages to/from admin
+    admin_user = await db.users.find_one({"is_admin": True}, {"_id": 0})
+    if not admin_user:
+        return {"threads": []}
+    
+    admin_id = admin_user["id"]
+    
+    # Find all private messages involving admin
+    messages = await db.messages.find(
+        {
+            "type": "private",
+            "$or": [
+                {"sender_id": admin_id},
+                {"recipient_id": admin_id}
+            ]
+        },
+        {"_id": 0}
+    ).sort("created_at", -1).to_list(500)
+    
+    # Group by other user
+    threads = {}
+    for msg in messages:
+        other_id = msg["recipient_id"] if msg["sender_id"] == admin_id else msg["sender_id"]
+        other_username = msg.get("sender_username", "Unknown") if msg["sender_id"] != admin_id else None
+        
+        if other_id not in threads:
+            # Get the other user's username
+            if other_username is None:
+                other_user = await db.users.find_one({"id": other_id}, {"_id": 0})
+                other_username = other_user["username"] if other_user else "Unknown"
+            
+            threads[other_id] = {
+                "user_id": other_id,
+                "username": other_username,
+                "last_message": msg["content"],
+                "last_message_at": msg["created_at"],
+                "unread": 0
+            }
+    
+    return {"threads": list(threads.values())}
+
+
 @api_router.get("/history/games")
 async def get_game_history(user: dict = Depends(get_current_user)):
     games = await db.games.find(
