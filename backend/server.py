@@ -986,7 +986,14 @@ async def get_game(game_id: str, user: dict = Depends(get_current_user)):
 
 @api_router.get("/games/table/{table_id}")
 async def get_game_by_table(table_id: str, user: dict = Depends(get_current_user)):
+    # Buscar primero un juego activo, sino el último juego (terminado)
     game = await db.games.find_one({"table_id": table_id, "status": "playing"}, {"_id": 0})
+    if not game:
+        game = await db.games.find_one(
+            {"table_id": table_id},
+            {"_id": 0},
+            sort=[("created_at", -1)]
+        )
     if not game:
         raise HTTPException(status_code=404, detail="No active game found")
     return await get_game(game["id"], user)

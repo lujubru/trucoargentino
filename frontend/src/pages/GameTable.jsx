@@ -39,9 +39,13 @@ const GameTable = () => {
       ]);
       setTable(tableRes.data);
 
-      if (tableRes.data.status === 'playing') {
-        const gameRes = await api.get(`/games/table/${tableId}`);
-        setGame(gameRes.data);
+      if (tableRes.data.status === 'playing' || tableRes.data.status === 'finished') {
+        try {
+          const gameRes = await api.get(`/games/table/${tableId}`);
+          setGame(gameRes.data);
+        } catch (err) {
+          console.error('Error fetching game data:', err);
+        }
       }
     } catch (error) {
       console.error('Error fetching game:', error);
@@ -73,13 +77,17 @@ const GameTable = () => {
   }, [fetchGameData]);
 
   const handleGameFinished = useCallback((data) => {
+    // Update game state immediately with winner_team from socket event
+    setGame(prev => prev ? { ...prev, status: 'finished', winner_team: data.winner_team, team1_score: data.team1_score, team2_score: data.team2_score } : prev);
+    
     const myTeam = game?.players?.find(p => p.id === user?.id)?.team;
     if (data.winner_team === myTeam) {
       showNotif(`¡Ganaste! Premio: $${data.prize_per_winner?.toFixed(0) || 0}`, 'success');
     } else {
       showNotif('Perdiste la partida', 'error');
     }
-    fetchGameData();
+    // Also fetch fresh data from server
+    setTimeout(() => fetchGameData(), 500);
   }, [game, user, fetchGameData]);
 
   const handleTrucoCalled = useCallback((data) => {
@@ -128,8 +136,12 @@ const GameTable = () => {
 
   const handleMazo = useCallback((data) => {
     showNotif(`${data.player_username} se fue al mazo. +${data.points_awarded} pts equipo ${data.winner_team}`, 'info');
-    if (data.game_finished) fetchGameData();
-    else handleGameUpdate();
+    if (data.game_finished) {
+      setGame(prev => prev ? { ...prev, status: 'finished', winner_team: data.winner_team } : prev);
+      setTimeout(() => fetchGameData(), 500);
+    } else {
+      handleGameUpdate();
+    }
   }, [handleGameUpdate, fetchGameData]);
 
   const handleTableChat = useCallback((msg) => {
